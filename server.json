@@ -1,0 +1,49 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.JonasFuchss/x402-trust-mcp",
+  "description": "Trust & reliability data for x402 endpoints: free ecosystem stats + leaderboard, paid per-endpoint trust scores and history over x402 with optional auto-pay. Backed by 24/7 monitoring of the x402 ecosystem on Base.",
+  "version": "1.0.2",
+  "websiteUrl": "https://x402.fuchss.app",
+  "repository": {
+    "url": "https://github.com/JonasFuchss/x402-trust-mcp",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "x402-trust-mcp",
+      "version": "1.0.2",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "X402_PRIVATE_KEY",
+          "description": "Optional Base wallet private key (0x...). When set, the paid tools auto-pay over x402 up to X402_MAX_USD; otherwise they return a price quote. The free tools need no key.",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "X402_MAX_USD",
+          "description": "Per-call auto-pay ceiling in USD.",
+          "isRequired": false,
+          "default": "0.05"
+        },
+        {
+          "name": "X402_TRUST_API_BASE",
+          "description": "API base URL.",
+          "isRequired": false,
+          "default": "https://x402.fuchss.app"
+        },
+        {
+          "name": "X402_TIMEOUT_MS",
+          "description": "Request timeout in milliseconds.",
+          "isRequired": false,
+          "default": "20000"
+        }
+      ]
+    }
+  ]
+}
