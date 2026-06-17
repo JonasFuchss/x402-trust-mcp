@@ -4,7 +4,7 @@ An [MCP](https://modelcontextprotocol.io) server that lets your agent check the
 **trust & reliability of x402 endpoints before paying them**.
 
 Backed by [x402.fuchss.app](https://x402.fuchss.app), which monitors the entire
-x402 ecosystem on Base 24/7: uptime probes, 402-envelope spec compliance,
+x402 ecosystem (Base + Solana) 24/7: uptime probes, 402-envelope spec compliance,
 advertised-price history, and **real on-chain USDC settlement volume** per
 endpoint.
 

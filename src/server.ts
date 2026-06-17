@@ -94,7 +94,7 @@ server.registerTool(
   {
     title: "x402 ecosystem stats (free)",
     description:
-      "Free aggregate snapshot of the entire x402 ecosystem on Base: how many endpoints are listed/active/delisted, what fraction are reachable and spec-compliant, and real on-chain USDC settlement volume / receivers / payers over the last 30 days. Use this to gauge market health before transacting.",
+      "Free aggregate snapshot of the entire x402 ecosystem (Base + Solana): how many endpoints are listed/active/delisted, what fraction are reachable and spec-compliant, and real on-chain USDC settlement volume / receivers / payers over the last 30 days. Use this to gauge market health before transacting.",
     inputSchema: {},
   },
   async () => asText(await getJson("/trust/stats")),
