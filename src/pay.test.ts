@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parse402, signPayment, type Accept } from "./pay.js";
+import { parse402, signPayment, validateAccept, SpendTracker, type Accept } from "./pay.js";
 
 const ACCEPT_BODY = {
   x402Version: 2,
@@ -80,5 +80,75 @@ describe("signPayment", () => {
         payTo: "0x0" as `0x${string}`,
       }),
     ).rejects.toThrow(/unsupported network/);
+  });
+});
+
+describe("validateAccept", () => {
+  const good: Accept = {
+    network: "eip155:8453",
+    amount: "5000",
+    asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    payTo: "0xbBECBE90F28632a9d52ed67b33b43767b8c89285",
+  };
+
+  it("accepts canonical Base USDC on an allow-listed chain", () => {
+    expect(validateAccept(good)).toBeNull();
+  });
+
+  it("rejects a non-canonical asset (fake token)", () => {
+    const r = validateAccept({ ...good, asset: "0x1111111111111111111111111111111111111111" });
+    expect(r).toMatch(/not canonical USDC/);
+  });
+
+  it("rejects a non-allow-listed chain", () => {
+    const r = validateAccept({ ...good, network: "eip155:1" });
+    expect(r).toMatch(/not in allow-list/);
+  });
+
+  it("rejects a malformed payTo / asset", () => {
+    expect(validateAccept({ ...good, payTo: "0xdeadbeef" as `0x${string}` })).toMatch(/payTo/);
+    expect(validateAccept({ ...good, asset: "nope" as `0x${string}` })).toMatch(/asset/);
+  });
+
+  it("enforces an explicit payTo allow-list when provided", () => {
+    expect(
+      validateAccept(good, { allowedPayTo: ["0x0000000000000000000000000000000000000001"] }),
+    ).toMatch(/not in allow-list/);
+    expect(validateAccept(good, { allowedPayTo: [good.payTo] })).toBeNull();
+  });
+
+  it("can allow Base Sepolia via guard override with its USDC", () => {
+    const sep: Accept = {
+      ...good,
+      network: "eip155:84532",
+      asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+    };
+    expect(validateAccept(sep, { allowedChainIds: [84532] })).toBeNull();
+  });
+});
+
+describe("SpendTracker", () => {
+  it("enforces a cumulative spend cap", () => {
+    const t = new SpendTracker(0.1, 0);
+    expect(t.check(0.05)).toBeNull();
+    t.record(0.05);
+    expect(t.check(0.05)).toBeNull();
+    t.record(0.05);
+    expect(t.check(0.01)).toMatch(/cumulative spend cap/);
+    expect(t.totalSpentUsd).toBeCloseTo(0.1);
+  });
+
+  it("enforces a call-count cap", () => {
+    const t = new SpendTracker(0, 2);
+    expect(t.check(1)).toBeNull();
+    t.record(1);
+    t.record(1);
+    expect(t.check(1)).toMatch(/call cap/);
+  });
+
+  it("treats 0 caps as unlimited", () => {
+    const t = new SpendTracker(0, 0);
+    for (let i = 0; i < 100; i++) t.record(1000);
+    expect(t.check(1_000_000)).toBeNull();
   });
 });

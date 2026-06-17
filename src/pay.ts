@@ -46,6 +46,56 @@ function parseCaip2ChainId(slug: string): number | null {
   return m && m[1] ? Number(m[1]) : null;
 }
 
+/** Canonical USDC contract per supported chain. The signed EIP-712
+ * `verifyingContract` MUST be one of these — a malicious 402 cannot point us at
+ * an arbitrary token. */
+export const KNOWN_USDC: Record<number, Address> = {
+  8453: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", // Base mainnet
+  84532: "0x036CbD53842c5426634e7929541eC2318f3dCF7e", // Base Sepolia
+};
+
+/** Chains we will sign payments on. Base mainnet only by default. */
+export const ALLOWED_CHAIN_IDS: number[] = [8453];
+
+const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+const eqAddr = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
+
+export interface PaymentGuard {
+  /** chain ids we'll sign on (default ALLOWED_CHAIN_IDS) */
+  allowedChainIds?: number[];
+  /** if set, payTo must be one of these addresses */
+  allowedPayTo?: Address[];
+}
+
+/**
+ * Validate a parsed 402 quote before signing anything. A 402 response is fully
+ * attacker-controlled (it decides asset/payTo/chain/amount), so we refuse to
+ * sign unless: the chain is allow-listed, the asset is the canonical USDC for
+ * that chain, addresses are well-formed, and (optionally) payTo is allow-listed.
+ * Returns null if safe, or a reason string to reject.
+ */
+export function validateAccept(accept: Accept, guard: PaymentGuard = {}): string | null {
+  const chainId = parseCaip2ChainId(accept.network);
+  if (chainId === null) return `unsupported (non-eip155) network: ${accept.network}`;
+  const allowedChains = guard.allowedChainIds ?? ALLOWED_CHAIN_IDS;
+  if (!allowedChains.includes(chainId)) {
+    return `chain ${chainId} not in allow-list [${allowedChains.join(",")}]`;
+  }
+  if (!ADDRESS_RE.test(accept.asset)) return `asset is not a valid address: ${accept.asset}`;
+  if (!ADDRESS_RE.test(accept.payTo)) return `payTo is not a valid address: ${accept.payTo}`;
+  const expectedUsdc = KNOWN_USDC[chainId];
+  if (!expectedUsdc || !eqAddr(accept.asset, expectedUsdc)) {
+    return `asset ${accept.asset} is not canonical USDC for chain ${chainId}`;
+  }
+  if (guard.allowedPayTo && guard.allowedPayTo.length > 0) {
+    if (!guard.allowedPayTo.some((p) => eqAddr(p, accept.payTo))) {
+      return `payTo ${accept.payTo} not in allow-list`;
+    }
+  }
+  if (!/^\d+$/.test(accept.amount)) return `amount is not an integer string: ${accept.amount}`;
+  return null;
+}
+
 /** Default EIP-712 domain per chain (USDC). Overridable via accept.extra. */
 function domainFor(chainId: number, extra?: { name?: string; version?: string }): { name: string; version: string } {
   if (extra?.name && extra.version) return { name: extra.name, version: extra.version };
@@ -139,6 +189,39 @@ export interface PaidCallResult {
 }
 
 /**
+ * Process-lifetime spend tracker. A per-call ceiling alone can't stop an agent
+ * (or a compromised server) from draining a funded wallet $0.05 at a time over
+ * unlimited calls, so we also enforce a cumulative cap and a call-count cap.
+ */
+export class SpendTracker {
+  private spentUsd = 0;
+  private calls = 0;
+  constructor(
+    private readonly maxTotalUsd: number,
+    private readonly maxCalls: number,
+  ) {}
+  /** Returns a reason string if this charge would breach a cap, else null. */
+  check(amountUsd: number): string | null {
+    if (this.maxCalls > 0 && this.calls + 1 > this.maxCalls) {
+      return `call cap reached (${this.maxCalls} paid calls this session)`;
+    }
+    if (this.maxTotalUsd > 0 && this.spentUsd + amountUsd > this.maxTotalUsd) {
+      return `cumulative spend cap reached ($${this.spentUsd.toFixed(
+        4,
+      )} + $${amountUsd} > $${this.maxTotalUsd})`;
+    }
+    return null;
+  }
+  record(amountUsd: number): void {
+    this.spentUsd += amountUsd;
+    this.calls += 1;
+  }
+  get totalSpentUsd(): number {
+    return this.spentUsd;
+  }
+}
+
+/**
  * POST a paid endpoint, auto-paying if `privateKey` is set and the quote is
  * within `maxAmountUsd`. Returns the data on success, or the quote (paid:false)
  * when auto-pay is disabled or the price exceeds the ceiling.
@@ -149,6 +232,10 @@ export async function paidPost(opts: {
   privateKey?: Hex;
   maxAmountUsd: number;
   timeoutMs: number;
+  /** SSRF/asset/chain guard applied to the 402 quote before signing. */
+  guard?: PaymentGuard;
+  /** process-lifetime cumulative spend + call-count cap. */
+  spendTracker?: SpendTracker;
 }): Promise<PaidCallResult> {
   const doPost = (headers: Record<string, string>): Promise<Response> => {
     const ctrl = new AbortController();
@@ -185,6 +272,20 @@ export async function paidPost(opts: {
     };
   }
 
+  // Refuse to sign a quote pointing at an unexpected asset/chain/recipient.
+  const guardReason = validateAccept(accept, opts.guard);
+  if (guardReason) {
+    return { paid: false, status: 402, data: { error: `unsafe payment quote: ${guardReason}` }, quote };
+  }
+
+  // Enforce the process-lifetime cumulative + call-count caps.
+  if (opts.spendTracker) {
+    const capReason = opts.spendTracker.check(amountUsd);
+    if (capReason) {
+      return { paid: false, status: 402, data: { error: capReason }, quote };
+    }
+  }
+
   const xPayment = await signPayment(opts.privateKey, accept);
   const second = await doPost({ "X-PAYMENT": xPayment });
   let paymentResponse: unknown;
@@ -196,6 +297,9 @@ export async function paidPost(opts: {
       /* ignore */
     }
   }
+  // Count the spend only once the server actually accepted the payment.
+  if (second.ok && opts.spendTracker) opts.spendTracker.record(amountUsd);
+
   return {
     paid: second.ok,
     status: second.status,

@@ -20,22 +20,50 @@
  * Config via env:
  *   X402_TRUST_API_BASE   default https://x402.fuchss.app
  *   X402_PRIVATE_KEY      optional 0x… Base wallet key to enable auto-pay
- *   X402_MAX_USD          default 0.05 — auto-pay ceiling per call
+ *   X402_MAX_USD          default 0.05 — auto-pay ceiling PER CALL (0 disables)
+ *   X402_MAX_TOTAL_USD    default 1.00 — cumulative auto-pay cap per process (0 = unlimited)
+ *   X402_MAX_CALLS        default 1000 — max paid calls per process (0 = unlimited)
  *   X402_TIMEOUT_MS       default 20000
+ *
+ * Safety: paid tools only ever sign EIP-3009 USDC transfers whose asset is the
+ * canonical USDC contract on an allow-listed chain (Base mainnet by default);
+ * a malicious 402 cannot redirect the payment to an arbitrary token or chain.
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import type { Hex } from "viem";
-import { paidPost } from "./pay.js";
+import { paidPost, SpendTracker } from "./pay.js";
 
 const API_BASE = (process.env.X402_TRUST_API_BASE ?? "https://x402.fuchss.app").replace(/\/$/, "");
 const PRIVATE_KEY = (() => {
   const k = process.env.X402_PRIVATE_KEY;
   return k && /^0x[0-9a-fA-F]{64}$/.test(k) ? (k as Hex) : undefined;
 })();
-const MAX_USD = Number(process.env.X402_MAX_USD ?? "0.05") || 0.05;
-const TIMEOUT_MS = Number(process.env.X402_TIMEOUT_MS ?? "20000") || 20_000;
+
+/** Parse a non-negative number env var. Unlike `Number(x) || dflt`, this does
+ * NOT silently turn an explicit `0` into the default, and rejects negatives. */
+function envNum(name: string, dflt: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return dflt;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) {
+    process.stderr.write(`warning: ${name}="${raw}" is invalid; using ${dflt}\n`);
+    return dflt;
+  }
+  return n;
+}
+
+// Per-call auto-pay ceiling. 0 = disable auto-pay entirely.
+const MAX_USD = envNum("X402_MAX_USD", 0.05);
+const TIMEOUT_MS = envNum("X402_TIMEOUT_MS", 20_000) || 20_000;
+// Process-lifetime caps so a runaway loop / hostile server can't drain the
+// wallet one small call at a time. 0 = unlimited (defaults are generous).
+const MAX_TOTAL_USD = envNum("X402_MAX_TOTAL_USD", 1.0);
+const MAX_CALLS = Math.floor(envNum("X402_MAX_CALLS", 1000));
+const AUTO_PAY = PRIVATE_KEY !== undefined && MAX_USD > 0;
+const spendTracker = new SpendTracker(MAX_TOTAL_USD, MAX_CALLS);
+const PAY_KEY: Hex | undefined = AUTO_PAY ? PRIVATE_KEY : undefined;
 
 async function getJson(path: string): Promise<unknown> {
   const ctrl = new AbortController();
@@ -45,6 +73,10 @@ async function getJson(path: string): Promise<unknown> {
       headers: { accept: "application/json", "user-agent": "x402-trust-mcp/1.0" },
       signal: ctrl.signal,
     });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      return { error: `HTTP ${res.status} from ${path}`, body: text.slice(0, 500) };
+    }
     return await res.json();
   } finally {
     clearTimeout(t);
@@ -55,7 +87,7 @@ function asText(obj: unknown): { content: { type: "text"; text: string }[] } {
   return { content: [{ type: "text", text: JSON.stringify(obj, null, 2) }] };
 }
 
-const server = new McpServer({ name: "x402-trust", version: "1.0.0" });
+const server = new McpServer({ name: "x402-trust", version: "1.0.4" });
 
 server.registerTool(
   "x402_ecosystem_stats",
@@ -93,9 +125,10 @@ server.registerTool(
     const r = await paidPost({
       url: `${API_BASE}/v1/x402-trust`,
       body: { resource },
-      ...(PRIVATE_KEY ? { privateKey: PRIVATE_KEY } : {}),
+      ...(PAY_KEY ? { privateKey: PAY_KEY } : {}),
       maxAmountUsd: MAX_USD,
       timeoutMs: TIMEOUT_MS,
+      spendTracker,
     });
     return asText(decorate(r));
   },
@@ -116,9 +149,10 @@ server.registerTool(
     const r = await paidPost({
       url: `${API_BASE}/v1/x402-history`,
       body: { resource, ...(days ? { days } : {}) },
-      ...(PRIVATE_KEY ? { privateKey: PRIVATE_KEY } : {}),
+      ...(PAY_KEY ? { privateKey: PAY_KEY } : {}),
       maxAmountUsd: MAX_USD,
       timeoutMs: TIMEOUT_MS,
+      spendTracker,
     });
     return asText(decorate(r));
   },
@@ -131,9 +165,9 @@ function decorate(r: Awaited<ReturnType<typeof paidPost>>): unknown {
     return {
       paid: false,
       quote: r.quote,
-      hint: PRIVATE_KEY
-        ? `Quote $${r.quote.amountUsd} exceeds X402_MAX_USD ($${MAX_USD}); raise the limit to auto-pay.`
-        : `Payment required ($${r.quote.amountUsd}). Set X402_PRIVATE_KEY (a funded Base USDC wallet) to enable auto-pay, or pay this x402 quote with your own wallet.`,
+      hint: AUTO_PAY
+        ? `Quote $${r.quote.amountUsd} not auto-paid (exceeds X402_MAX_USD $${MAX_USD}, or a spend/asset guard blocked it). See detail.`
+        : `Payment required ($${r.quote.amountUsd}). Set X402_PRIVATE_KEY (a funded Base USDC wallet) and X402_MAX_USD>0 to enable auto-pay, or pay this x402 quote with your own wallet.`,
       detail: r.data,
     };
   }
@@ -145,7 +179,8 @@ async function main(): Promise<void> {
   await server.connect(transport);
   // stderr is safe for logs; stdout is the MCP channel.
   process.stderr.write(
-    `x402-trust MCP server ready (api=${API_BASE}, autoPay=${PRIVATE_KEY ? "on" : "off"}, maxUsd=${MAX_USD})\n`,
+    `x402-trust MCP server ready (api=${API_BASE}, autoPay=${AUTO_PAY ? "on" : "off"}, ` +
+      `maxUsd=${MAX_USD}, maxTotalUsd=${MAX_TOTAL_USD}, maxCalls=${MAX_CALLS})\n`,
   );
 }
 
