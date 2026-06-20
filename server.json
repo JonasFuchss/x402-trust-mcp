@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.JonasFuchss/x402-trust-mcp",
   "description": "Trust & reliability scores for x402 endpoints: free ecosystem stats, paid per-endpoint scores.",
-  "version": "1.0.4",
+  "version": "1.1.0",
   "websiteUrl": "https://x402.fuchss.app",
   "repository": {
     "url": "https://github.com/JonasFuchss/x402-trust-mcp",
