@@ -27,9 +27,21 @@
         },
         {
           "name": "X402_MAX_USD",
-          "description": "Per-call auto-pay ceiling in USD.",
+          "description": "Per-call auto-pay ceiling in USD. 0 disables auto-pay.",
           "isRequired": false,
           "default": "0.05"
+        },
+        {
+          "name": "X402_MAX_TOTAL_USD",
+          "description": "Cumulative auto-pay cap per process in USD. 0 = unlimited.",
+          "isRequired": false,
+          "default": "1.00"
+        },
+        {
+          "name": "X402_MAX_CALLS",
+          "description": "Max paid calls per process. 0 = unlimited.",
+          "isRequired": false,
+          "default": "1000"
         },
         {
           "name": "X402_TRUST_API_BASE",
