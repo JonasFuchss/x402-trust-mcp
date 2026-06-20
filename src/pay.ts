@@ -1,12 +1,14 @@
 /**
  * Minimal x402 client payer for the MCP server's paid tools.
  *
- * Flow (matches our reseller + the verified Venice v2 wire format):
+ * Flow (canonical x402 V2):
  *   1. POST the request with no payment → 402 + PAYMENT-REQUIRED header (or
  *      JSON body) describing accepts[0] = {network, asset, amount, payTo, extra}.
  *   2. Sign an EIP-3009 transferWithAuthorization over USDC for `amount` to
  *      `payTo`, valid for a short window.
- *   3. Re-POST with X-PAYMENT = base64(JSON payload). Server settles + responds.
+ *   3. Re-POST with PAYMENT-SIGNATURE = base64(JSON payload). Server settles + responds.
+ *
+ * Legacy X-PAYMENT header is accepted as a fallback during the transition period.
  *
  * Auto-pay is OFF unless the agent operator provides X402_PRIVATE_KEY. Without
  * it, the paid tools return the quote so the agent's own wallet/host can pay.
@@ -110,31 +112,37 @@ function freshNonce(): Hex {
   return ("0x" + Array.from(b).map((x) => x.toString(16).padStart(2, "0")).join("")) as Hex;
 }
 
-/** Extract the first accept from a 402 response (header preferred, body fallback). */
-export function parse402(headerB64: string | null, body: unknown): Accept | null {
-  const tryObj = (o: unknown): Accept | null => {
-    if (!o || typeof o !== "object") return null;
+/** Extract all accepts from a 402 response (header preferred, body fallback).
+ *  Returns the full list so the caller can select the best compatible one. */
+export function parseAllAccepts(headerB64: string | null, body: unknown): Accept[] {
+  const tryObj = (o: unknown): Accept[] => {
+    if (!o || typeof o !== "object") return [];
     const accepts = (o as { accepts?: unknown }).accepts;
-    if (!Array.isArray(accepts) || accepts.length === 0) return null;
-    const a = accepts[0] as Record<string, unknown>;
-    const network = typeof a.network === "string" ? a.network : "";
-    const asset = typeof a.asset === "string" ? a.asset : "";
-    const amount = typeof a.amount === "string" ? a.amount : typeof a.maxAmountRequired === "string" ? a.maxAmountRequired : "";
-    const payTo = typeof a.payTo === "string" ? a.payTo : "";
-    if (!network || !asset || !amount || !payTo) return null;
-    return {
-      network,
-      asset: asset as Address,
-      amount,
-      payTo: payTo as Address,
-      ...(a.extra && typeof a.extra === "object" ? { extra: a.extra as { name?: string; version?: string } } : {}),
-    };
+    if (!Array.isArray(accepts) || accepts.length === 0) return [];
+    const result: Accept[] = [];
+    for (const a of accepts) {
+      const r = a as Record<string, unknown>;
+      const network = typeof r.network === "string" ? r.network : "";
+      const asset = typeof r.asset === "string" ? r.asset : "";
+      const amount = typeof r.amount === "string" ? r.amount : typeof r.maxAmountRequired === "string" ? r.maxAmountRequired : "";
+      const payTo = typeof r.payTo === "string" ? r.payTo : "";
+      if (!network || !asset || !amount || !payTo) continue;
+      result.push({
+        network,
+        asset: asset as Address,
+        amount,
+        payTo: payTo as Address,
+        ...(r.maxTimeoutSeconds && typeof r.maxTimeoutSeconds === "number" ? { maxTimeoutSeconds: r.maxTimeoutSeconds } : {}),
+        ...(r.extra && typeof r.extra === "object" ? { extra: r.extra as { name?: string; version?: string } } : {}),
+      });
+    }
+    return result;
   };
   if (headerB64) {
     try {
       const decoded = JSON.parse(Buffer.from(headerB64, "base64").toString("utf8"));
-      const a = tryObj(decoded);
-      if (a) return a;
+      const list = tryObj(decoded);
+      if (list.length > 0) return list;
     } catch {
       /* fall through to body */
     }
@@ -142,7 +150,34 @@ export function parse402(headerB64: string | null, body: unknown): Accept | null
   return tryObj(body);
 }
 
-/** Build the base64 X-PAYMENT header by signing EIP-3009 for the accept. */
+/** Select the best compatible accept from a list, preferring mainnet + lowest amount. */
+export function selectBestAccept(accepts: Accept[]): Accept | null {
+  if (accepts.length === 0) return null;
+  // Filter to accepts that pass validation (allow-listed chain + canonical USDC)
+  const compatible = accepts.filter((a) => validateAccept(a) === null);
+  if (compatible.length === 0) return null;
+  // Sort: prefer mainnet (8453) over testnet, then lowest amount
+  compatible.sort((a, b) => {
+    const aMainnet = a.network === "eip155:8453" ? 0 : 1;
+    const bMainnet = b.network === "eip155:8453" ? 0 : 1;
+    if (aMainnet !== bMainnet) return aMainnet - bMainnet;
+    const aAmt = BigInt(a.amount);
+    const bAmt = BigInt(b.amount);
+    if (aAmt !== bAmt) return aAmt < bAmt ? -1 : 1;
+    return 0;
+  });
+  return compatible[0]!;
+}
+
+/** Extract the best compatible accept from a 402 response (header preferred, body fallback).
+ *  Replaces the old parse402 which only took the first accept. */
+export function parse402(headerB64: string | null, body: unknown): Accept | null {
+  const all = parseAllAccepts(headerB64, body);
+  return selectBestAccept(all);
+}
+
+/** Build the base64 PAYMENT-SIGNATURE header by signing EIP-3009 for the accept.
+ * Produces a canonical V2 payload with the `accepted` wrapper. */
 export async function signPayment(privateKey: Hex, accept: Accept): Promise<string> {
   const chainId = parseCaip2ChainId(accept.network);
   if (chainId === null) throw new Error(`unsupported network: ${accept.network}`);
@@ -173,8 +208,15 @@ export async function signPayment(privateKey: Hex, accept: Accept): Promise<stri
   });
   const payload = {
     x402Version: 2,
-    scheme: "exact",
-    network: accept.network,
+    accepted: {
+      scheme: accept.scheme ?? "exact",
+      network: accept.network,
+      amount: accept.amount,
+      asset: accept.asset,
+      payTo: accept.payTo,
+      ...(accept.maxTimeoutSeconds ? { maxTimeoutSeconds: accept.maxTimeoutSeconds } : {}),
+      ...(accept.extra ? { extra: accept.extra } : {}),
+    },
     payload: { signature, authorization },
   };
   return Buffer.from(JSON.stringify(payload), "utf8").toString("base64");
@@ -287,9 +329,9 @@ export async function paidPost(opts: {
   }
 
   const xPayment = await signPayment(opts.privateKey, accept);
-  const second = await doPost({ "X-PAYMENT": xPayment });
+  const second = await doPost({ "PAYMENT-SIGNATURE": xPayment });
   let paymentResponse: unknown;
-  const prHeader = second.headers.get("x-payment-response");
+  const prHeader = second.headers.get("payment-response") ?? second.headers.get("x-payment-response");
   if (prHeader) {
     try {
       paymentResponse = JSON.parse(Buffer.from(prHeader, "base64").toString("utf8"));

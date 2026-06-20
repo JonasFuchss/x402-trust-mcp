@@ -20,6 +20,81 @@ function b64(o: unknown): string {
   return Buffer.from(JSON.stringify(o), "utf8").toString("base64");
 }
 
+describe("parse402 multi-accept selection", () => {
+  it("chooses the compatible Base USDC accept, not the first (Solana) accept", () => {
+    const body = {
+      x402Version: 2,
+      accepts: [
+        {
+          scheme: "exact",
+          network: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+          amount: "1000",
+          asset: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+          payTo: "7xKXtg2CW87d97TXJSDpbD5jBkheTqA3Xa9EGQx",
+        },
+        {
+          scheme: "exact",
+          network: "eip155:8453",
+          amount: "5000",
+          asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+          payTo: "0xbBECBE90F28632a9d52ed67b33b43767b8c89285",
+          extra: { name: "USD Coin", version: "2" },
+        },
+      ],
+    };
+    const a = parse402(null, body);
+    expect(a).not.toBeNull();
+    expect(a!.network).toBe("eip155:8453");
+    expect(a!.amount).toBe("5000");
+  });
+
+  it("returns null when no accept is compatible with the client", () => {
+    const body = {
+      x402Version: 2,
+      accepts: [
+        {
+          scheme: "exact",
+          network: "eip155:137",
+          amount: "1000",
+          asset: "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
+          payTo: "0x1234567890123456789012345678901234567890",
+          extra: { name: "USD Coin", version: "2" },
+        },
+      ],
+    };
+    const a = parse402(null, body);
+    // Polygon is not in the default allow-list → no compatible accept
+    expect(a).toBeNull();
+  });
+
+  it("prefers mainnet over testnet when both are compatible", () => {
+    const body = {
+      x402Version: 2,
+      accepts: [
+        {
+          scheme: "exact",
+          network: "eip155:84532",
+          amount: "1000",
+          asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+          payTo: "0xbBECBE90F28632a9d52ed67b33b43767b8c89285",
+          extra: { name: "USDC", version: "2" },
+        },
+        {
+          scheme: "exact",
+          network: "eip155:8453",
+          amount: "5000",
+          asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+          payTo: "0xbBECBE90F28632a9d52ed67b33b43767b8c89285",
+          extra: { name: "USD Coin", version: "2" },
+        },
+      ],
+    };
+    const a = parse402(null, body);
+    expect(a).not.toBeNull();
+    expect(a!.network).toBe("eip155:8453");
+  });
+});
+
 describe("parse402", () => {
   it("parses from the PAYMENT-REQUIRED header", () => {
     const a = parse402(b64(ACCEPT_BODY), null);
@@ -61,8 +136,14 @@ describe("signPayment", () => {
     const header = await signPayment(KEY, accept);
     const decoded = JSON.parse(Buffer.from(header, "base64").toString("utf8"));
     expect(decoded.x402Version).toBe(2);
-    expect(decoded.scheme).toBe("exact");
-    expect(decoded.network).toBe("eip155:8453");
+    // Canonical V2: scheme/network live inside `accepted`, not at root
+    expect(decoded.accepted).toBeDefined();
+    expect(decoded.accepted.scheme).toBe("exact");
+    expect(decoded.accepted.network).toBe("eip155:8453");
+    expect(decoded.accepted.amount).toBe("5000");
+    expect(decoded.accepted.asset).toBe(accept.asset);
+    expect(decoded.accepted.payTo).toBe(accept.payTo);
+    expect(decoded.accepted.extra).toEqual({ name: "USD Coin", version: "2" });
     expect(decoded.payload.signature).toMatch(/^0x[0-9a-f]+$/i);
     const auth = decoded.payload.authorization;
     expect(auth.to).toBe(accept.payTo);
