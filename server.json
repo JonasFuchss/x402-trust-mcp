@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.JonasFuchss/x402-trust-mcp",
   "description": "Trust & reliability scores for x402 endpoints: free ecosystem stats, paid per-endpoint scores.",
-  "version": "1.0.4",
+  "version": "1.1.0",
   "websiteUrl": "https://x402.fuchss.app",
   "repository": {
     "url": "https://github.com/JonasFuchss/x402-trust-mcp",
@@ -27,9 +27,21 @@
         },
         {
           "name": "X402_MAX_USD",
-          "description": "Per-call auto-pay ceiling in USD.",
+          "description": "Per-call auto-pay ceiling in USD. 0 disables auto-pay.",
           "isRequired": false,
           "default": "0.05"
+        },
+        {
+          "name": "X402_MAX_TOTAL_USD",
+          "description": "Cumulative auto-pay cap per process in USD. 0 = unlimited.",
+          "isRequired": false,
+          "default": "1.00"
+        },
+        {
+          "name": "X402_MAX_CALLS",
+          "description": "Max paid calls per process. 0 = unlimited.",
+          "isRequired": false,
+          "default": "1000"
         },
         {
           "name": "X402_TRUST_API_BASE",

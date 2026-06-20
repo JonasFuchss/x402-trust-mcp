@@ -4,7 +4,7 @@ An [MCP](https://modelcontextprotocol.io) server that lets your agent check the
 **trust & reliability of x402 endpoints before paying them**.
 
 Backed by [x402.fuchss.app](https://x402.fuchss.app), which monitors the entire
-x402 ecosystem (Base + Solana) 24/7: uptime probes, 402-envelope spec compliance,
+x402 ecosystem on Base 24/7: uptime probes, 402-envelope spec compliance,
 advertised-price history, and **real on-chain USDC settlement volume** per
 endpoint.
 
@@ -27,6 +27,26 @@ payment envelopes. Before your agent sends USDC to an unknown endpoint, ask:
 Paid tools cost a few tenths of a cent, charged over x402 (USDC on Base). If you
 set `X402_PRIVATE_KEY`, the server **auto-pays** within your `X402_MAX_USD`
 limit; otherwise it returns the price quote for your host to pay.
+
+## x402 V2 Payment Flow
+
+This MCP server uses the canonical x402 V2 payment flow:
+
+1. **402 + `PAYMENT-REQUIRED`** — The server responds with HTTP 402 and a
+   base64-encoded `PAYMENT-REQUIRED` header containing the payment requirements
+   (accepts, network, asset, amount, payTo).
+2. **Sign + retry with `PAYMENT-SIGNATURE`** — The MCP client signs an
+   EIP-3009 `transferWithAuthorization` for the selected accept and re-POSTs
+   with the `PAYMENT-SIGNATURE` header (base64-encoded payment payload).
+3. **Settlement + `PAYMENT-RESPONSE`** — The server settles the payment and
+   responds with the data plus a `PAYMENT-RESPONSE` header.
+
+Legacy `X-PAYMENT` / `X-PAYMENT-RESPONSE` headers are accepted as a fallback
+during the V1→V2 transition period but are not the default.
+
+**Accept selection:** When a 402 response offers multiple accepts (e.g. Solana
++ Base USDC), the client selects the best compatible one (canonical USDC on an
+allow-listed chain) rather than blindly taking the first accept.
 
 ## Install
 
@@ -66,7 +86,9 @@ To enable autonomous payment for the paid tools, add a funded Base USDC wallet:
 |---|---|---|
 | `X402_TRUST_API_BASE` | `https://x402.fuchss.app` | API base URL. |
 | `X402_PRIVATE_KEY` | _(unset)_ | Base wallet private key (0x…). Enables auto-pay for paid tools. |
-| `X402_MAX_USD` | `0.05` | Per-call auto-pay ceiling. |
+| `X402_MAX_USD` | `0.05` | Per-call auto-pay ceiling. 0 disables auto-pay. |
+| `X402_MAX_TOTAL_USD` | `1.00` | Cumulative auto-pay cap per process. 0 = unlimited. |
+| `X402_MAX_CALLS` | `1000` | Max paid calls per process. 0 = unlimited. |
 | `X402_TIMEOUT_MS` | `20000` | Request timeout. |
 
 The free tools work with no configuration at all.
@@ -76,6 +98,14 @@ The free tools work with no configuration at all.
 `X402_PRIVATE_KEY` is a hot wallet — fund it with only what you're willing to
 spend on trust lookups. The key never leaves your machine; it signs EIP-3009
 payment authorizations locally.
+
+**Policy checks enforced before signing:**
+- Chain allow-list (Base mainnet by default)
+- Canonical USDC contract verification (no arbitrary tokens)
+- Optional payTo allow-list
+- Per-call spend ceiling (`X402_MAX_USD`)
+- Cumulative spend cap (`X402_MAX_TOTAL_USD`)
+- Call-count cap (`X402_MAX_CALLS`)
 
 ## License
 
