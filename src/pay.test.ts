@@ -136,14 +136,11 @@ describe("signPayment", () => {
     const header = await signPayment(KEY, accept);
     const decoded = JSON.parse(Buffer.from(header, "base64").toString("utf8"));
     expect(decoded.x402Version).toBe(2);
-    // Canonical V2: scheme/network live inside `accepted`, not at root
-    expect(decoded.accepted).toBeDefined();
-    expect(decoded.accepted.scheme).toBe("exact");
-    expect(decoded.accepted.network).toBe("eip155:8453");
-    expect(decoded.accepted.amount).toBe("5000");
-    expect(decoded.accepted.asset).toBe(accept.asset);
-    expect(decoded.accepted.payTo).toBe(accept.payTo);
-    expect(decoded.accepted.extra).toEqual({ name: "USD Coin", version: "2" });
+    // Canonical x402 PaymentPayload: scheme/network at top level, no `accepted`
+    // wrapper (the server reads scheme/network at root).
+    expect(decoded.accepted).toBeUndefined();
+    expect(decoded.scheme).toBe("exact");
+    expect(decoded.network).toBe("eip155:8453");
     expect(decoded.payload.signature).toMatch(/^0x[0-9a-f]+$/i);
     const auth = decoded.payload.authorization;
     expect(auth.to).toBe(accept.payTo);

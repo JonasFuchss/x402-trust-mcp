@@ -177,7 +177,10 @@ export function parse402(headerB64: string | null, body: unknown): Accept | null
 }
 
 /** Build the base64 PAYMENT-SIGNATURE header by signing EIP-3009 for the accept.
- * Produces a canonical V2 payload with the `accepted` wrapper. */
+ * Produces a canonical x402 PaymentPayload with `scheme`/`network` at the top
+ * level (the server reads them there; an `accepted` wrapper hides them and
+ * yields `unsupported scheme: undefined`). amount/asset/payTo are not part of
+ * the PaymentPayload — they come from the server's 402 quote. */
 export async function signPayment(privateKey: Hex, accept: Accept): Promise<string> {
   const chainId = parseCaip2ChainId(accept.network);
   if (chainId === null) throw new Error(`unsupported network: ${accept.network}`);
@@ -208,15 +211,8 @@ export async function signPayment(privateKey: Hex, accept: Accept): Promise<stri
   });
   const payload = {
     x402Version: 2,
-    accepted: {
-      scheme: accept.scheme ?? "exact",
-      network: accept.network,
-      amount: accept.amount,
-      asset: accept.asset,
-      payTo: accept.payTo,
-      ...(accept.maxTimeoutSeconds ? { maxTimeoutSeconds: accept.maxTimeoutSeconds } : {}),
-      ...(accept.extra ? { extra: accept.extra } : {}),
-    },
+    scheme: accept.scheme ?? "exact",
+    network: accept.network,
     payload: { signature, authorization },
   };
   return Buffer.from(JSON.stringify(payload), "utf8").toString("base64");

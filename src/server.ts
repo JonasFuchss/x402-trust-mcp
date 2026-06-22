@@ -37,8 +37,25 @@ import { paidPost, SpendTracker } from "./pay.js";
 
 const API_BASE = (process.env.X402_TRUST_API_BASE ?? "https://x402.fuchss.app").replace(/\/$/, "");
 const PRIVATE_KEY = (() => {
-  const k = process.env.X402_PRIVATE_KEY;
-  return k && /^0x[0-9a-fA-F]{64}$/.test(k) ? (k as Hex) : undefined;
+  const raw = process.env.X402_PRIVATE_KEY;
+  if (raw === undefined || raw.trim() === "") return undefined;
+  // Be tolerant about the input shape: accept the key with or without a `0x`
+  // prefix and ignore surrounding whitespace, then normalize to canonical
+  // `0x`-prefixed lower-hex. A bare 64-hex string is a perfectly valid key and
+  // shouldn't silently disable auto-pay.
+  const trimmed = raw.trim();
+  const hex = trimmed.startsWith("0x") || trimmed.startsWith("0X") ? trimmed.slice(2) : trimmed;
+  if (!/^[0-9a-fA-F]{64}$/.test(hex)) {
+    // Loud failure: the operator clearly intended to enable auto-pay but the
+    // key is malformed. Never print the key itself — only its length.
+    process.stderr.write(
+      `warning: X402_PRIVATE_KEY is set but not a valid 32-byte hex key ` +
+        `(got ${hex.length} hex chars after stripping any 0x prefix; expected 64). ` +
+        `Auto-pay stays OFF.\n`,
+    );
+    return undefined;
+  }
+  return ("0x" + hex.toLowerCase()) as Hex;
 })();
 
 /** Parse a non-negative number env var. Unlike `Number(x) || dflt`, this does
