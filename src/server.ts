@@ -133,7 +133,7 @@ server.registerTool(
   {
     title: "x402 trust score for an endpoint (paid)",
     description:
-      "Trust score (0-100, grade A-F) for a SPECIFIC x402 endpoint, with full component breakdown, flags (e.g. delisted, non-compliant envelope, no observed settlements), and 30-day stats. Call this BEFORE paying an unknown x402 endpoint to avoid dead or fraudulent services. Pay-per-call over x402; auto-pays if a wallet is configured, otherwise returns the price quote.",
+      "Trust score (0-100, grade A-F) for a SPECIFIC x402 endpoint, PLUS a machine-readable verdict ('recommendation': proceed|caution|avoid), the advertised price ('advertised.amountUsd'), a confidence-adjusted band ('scoreRange'), and structured flags ('flagsDetailed' with code/severity/message — any severity 'error' means avoid). Includes the full component breakdown and 30-day on-chain stats. One call answers WHETHER and at WHAT PRICE to use an endpoint. Call this BEFORE paying an unknown x402 endpoint to avoid dead, fraudulent, or recently-hijacked services. Pay-per-call over x402; auto-pays if a wallet is configured, otherwise returns the price quote.",
     inputSchema: {
       resource: z.string().describe("Full x402 resource URL to evaluate, e.g. https://api.example.com/v1/thing"),
     },

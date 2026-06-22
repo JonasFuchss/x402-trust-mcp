@@ -21,7 +21,7 @@
       "environmentVariables": [
         {
           "name": "X402_PRIVATE_KEY",
-          "description": "Optional Base wallet private key (0x...). When set, the paid tools auto-pay over x402 up to X402_MAX_USD; otherwise they return a price quote. The free tools need no key.",
+          "description": "Optional Base wallet private key (with or without the 0x prefix). When set, the paid tools auto-pay over x402 up to X402_MAX_USD; otherwise they return a price quote. The free tools need no key.",
           "isRequired": false,
           "isSecret": true
         },

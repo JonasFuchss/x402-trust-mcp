@@ -21,12 +21,32 @@ payment envelopes. Before your agent sends USDC to an unknown endpoint, ask:
 |---|---|---|
 | `x402_ecosystem_stats` | free | Aggregate state of the x402 ecosystem (listings, reachability, compliance, 30d settlement volume). |
 | `x402_trust_leaderboard` | free | Top-25 most trustworthy x402 endpoints. |
-| `x402_trust_score` | paid | Trust score (0-100, grade A-F) for a specific endpoint, with full breakdown + flags. |
+| `x402_trust_score` | paid | Trust score (0-100, grade A-F) for a specific endpoint, plus a machine-readable pay/don't-pay verdict, the advertised price, a confidence band, and structured flags — everything to decide in one call. |
 | `x402_endpoint_history` | paid | Observation time-series for a specific endpoint (listings, price changes, probes). |
 
 Paid tools cost a few tenths of a cent, charged over x402 (USDC on Base). If you
 set `X402_PRIVATE_KEY`, the server **auto-pays** within your `X402_MAX_USD`
 limit; otherwise it returns the price quote for your host to pay.
+
+### `x402_trust_score` result
+
+A single call returns everything an agent needs to decide **whether** and at
+**what price** to use an endpoint — no second round-trip, no raw-unit guessing:
+
+| Field | Meaning |
+|---|---|
+| `score` / `grade` | 0-100 point score and its A-F grade. |
+| `recommendation` | Machine verdict: `proceed` \| `caution` \| `avoid`. Already prices in data uncertainty — low confidence caps it at `caution` (a young endpoint is *unproven*, not *untrustworthy*); `avoid` is reserved for real negatives (error-severity flags, low score, recent payTo change). |
+| `scoreRange` | `{ low, point, high }` — a confidence-adjusted band. Decide conservatively against `low`. |
+| `confidence` / `confidenceDetail` | Overall confidence plus its parts: `observation` (data volume/age) vs `economic` (settlement coverage). |
+| `gradeThresholds` | The score cutoffs for each grade, so the verdict is auditable. |
+| `advertised` | The last observed 402 quote: `{ amount, amountUsd, asset, network, decimals, observedAtTs }`. Trust **and** cost in one call. |
+| `flags` / `flagsDetailed` | Legacy string flags plus structured `{ code, severity, message }`. Rule of thumb: **any flag with `severity: "error"` ⇒ avoid.** |
+| `breakdown` / `subscores` | The full deterministic math (uptime, compliance, latency, age, activity, stability → technical / spec / economic subscores). |
+| `stats` | Observed evidence: probe counts, latency, payTo, `settledVolumeUsd30d`, distinct payers, and a `payToChanged*` hijack signal when the receiving wallet changed recently. |
+
+Everything is computed deterministically (no LLM) from continuous on-chain and
+probe observation, so the breakdown is fully auditable.
 
 ## x402 V2 Payment Flow
 
@@ -85,7 +105,7 @@ To enable autonomous payment for the paid tools, add a funded Base USDC wallet:
 | Var | Default | Description |
 |---|---|---|
 | `X402_TRUST_API_BASE` | `https://x402.fuchss.app` | API base URL. |
-| `X402_PRIVATE_KEY` | _(unset)_ | Base wallet private key (0x…). Enables auto-pay for paid tools. |
+| `X402_PRIVATE_KEY` | _(unset)_ | Base wallet private key. Enables auto-pay for paid tools. Accepted with or without the `0x` prefix (surrounding whitespace is trimmed); a set-but-malformed key logs a warning and leaves auto-pay off rather than failing silently. |
 | `X402_MAX_USD` | `0.05` | Per-call auto-pay ceiling. 0 disables auto-pay. |
 | `X402_MAX_TOTAL_USD` | `1.00` | Cumulative auto-pay cap per process. 0 = unlimited. |
 | `X402_MAX_CALLS` | `1000` | Max paid calls per process. 0 = unlimited. |
