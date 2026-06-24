@@ -21,6 +21,7 @@ payment envelopes. Before your agent sends USDC to an unknown endpoint, ask:
 |---|---|---|
 | `x402_ecosystem_stats` | free | Aggregate state of the x402 ecosystem (listings, reachability, compliance, 30d settlement volume). |
 | `x402_trust_leaderboard` | free | Top-25 most trustworthy x402 endpoints. |
+| `x402_trust_preview` | free | Teaser of `x402_trust_score` for a specific endpoint: the headline verdict (grade + `recommendation`), an approximate score, and any safety-critical flags (incl. unresolved URL-template traps caught even for unobserved endpoints). Try the service before you pay. |
 | `x402_trust_score` | paid | Trust score (0-100, grade A-F) for a specific endpoint, plus a machine-readable pay/don't-pay verdict, the advertised price, a confidence band, and structured flags — everything to decide in one call. |
 | `x402_endpoint_history` | paid | Observation time-series for a specific endpoint (listings, price changes, probes). |
 

@@ -10,6 +10,7 @@
  * Tools:
  *   x402_ecosystem_stats   (free)  aggregate state-of-x402 snapshot
  *   x402_trust_leaderboard (free)  top endpoints by trust score
+ *   x402_trust_preview     (free)  teaser verdict for one endpoint (try before you pay)
  *   x402_trust_score       (paid)  per-endpoint score 0-100 + breakdown
  *   x402_endpoint_history  (paid)  per-endpoint observation time-series
  *
@@ -104,7 +105,7 @@ function asText(obj: unknown): { content: { type: "text"; text: string }[] } {
   return { content: [{ type: "text", text: JSON.stringify(obj, null, 2) }] };
 }
 
-const server = new McpServer({ name: "x402-trust", version: "1.0.4" });
+const server = new McpServer({ name: "x402-trust", version: "1.2.0" });
 
 server.registerTool(
   "x402_ecosystem_stats",
@@ -126,6 +127,25 @@ server.registerTool(
     inputSchema: {},
   },
   async () => asText(await getJson("/trust/leaderboard")),
+);
+
+server.registerTool(
+  "x402_trust_preview",
+  {
+    title: "x402 trust preview for an endpoint (free)",
+    description:
+      "FREE teaser of x402_trust_score for a SPECIFIC x402 endpoint: returns the headline verdict ('recommendation': proceed|caution|avoid), the letter grade, an approximate score, flag counts, and any safety-critical error-flag codes (e.g. 'unresolved-url-template' — a trap we catch even for endpoints we haven't observed yet). The exact score, full breakdown, advertised price, and on-chain settlement proof are withheld (listed under 'unlockedByPaidCall' — get them via x402_trust_score). Call with no resource to preview the current #1 leaderboard endpoint. Use this to try the service for free before paying.",
+    inputSchema: {
+      resource: z
+        .string()
+        .optional()
+        .describe("Full x402 resource URL to preview. Omit to preview the top-ranked endpoint."),
+    },
+  },
+  async ({ resource }) => {
+    const qs = resource ? `?resource=${encodeURIComponent(resource)}` : "";
+    return asText(await getJson(`/v1/x402-trust-preview${qs}`));
+  },
 );
 
 server.registerTool(
