@@ -10,7 +10,7 @@
  * Tools:
  *   x402_ecosystem_stats   (free)  aggregate state-of-x402 snapshot
  *   x402_trust_leaderboard (free)  top endpoints by trust score
- *   x402_trust_preview     (free)  teaser verdict for one endpoint (try before you pay)
+ *   x402_trust_preview     (free)  full sample reports for 3 fixed endpoints (best/median/worst)
  *   x402_trust_score       (paid)  per-endpoint score 0-100 + breakdown
  *   x402_endpoint_history  (paid)  per-endpoint observation time-series
  *
@@ -105,7 +105,7 @@ function asText(obj: unknown): { content: { type: "text"; text: string }[] } {
   return { content: [{ type: "text", text: JSON.stringify(obj, null, 2) }] };
 }
 
-const server = new McpServer({ name: "x402-trust", version: "1.2.2" });
+const server = new McpServer({ name: "x402-trust", version: "1.3.0" });
 
 server.registerTool(
   "x402_ecosystem_stats",
@@ -132,20 +132,12 @@ server.registerTool(
 server.registerTool(
   "x402_trust_preview",
   {
-    title: "x402 trust preview for an endpoint (free)",
+    title: "x402 trust preview — full sample reports (free)",
     description:
-      "FREE teaser of x402_trust_score for a SPECIFIC x402 endpoint: returns the qualitative verdict ('recommendation': proceed|caution|avoid), the letter grade, flag counts, the error+warn flag CODES (e.g. 'unresolved-url-template' — a trap we catch even for endpoints we haven't observed yet), and per-axis indicators in 'signals' that name WHICH axis wobbles (compliance/price/payTo/…) without the value, marked ⚠️ for a real problem vs 🔐 for a paid-unlock (e.g. freshness=🔐, a live re-probe behind the paywall). Only on a 'caution' verdict it adds 'wouldChangeWith' (axes the paid call could FLIP the decision on) and an 'ambiguity' block (the verdict is unresolved); a clear proceed/avoid omits these. Deliberately withheld (paid only, listed in 'unlockedByPaidCall', most useful first): advertised price, live freshness re-probe, current payTo, on-chain settlement figures, then the exact score & scoreRange — get them via x402_trust_score. Call with no resource to preview the #1 leaderboard endpoint. Try before you pay.",
-    inputSchema: {
-      resource: z
-        .string()
-        .optional()
-        .describe("Full x402 resource URL to preview. Omit to preview the top-ranked endpoint."),
-    },
+      "FREE showcase of what x402_trust_score returns. You do NOT choose the endpoint: this returns the COMPLETE paid-grade trust report (every field — exact score, scoreRange, full component breakdown, advertised price, on-chain settlement figures, all flags) for THREE endpoints picked from the current population — the best-scored, the median, and the worst-scored ('samples' each carry 'role', 'populationRank', and the full 'report'). Use it to see exactly what the paid output looks like across the entire quality range BEFORE paying. It cannot score an endpoint you choose — to evaluate YOUR OWN endpoint, call x402_trust_score (paid). Takes no arguments.",
+    inputSchema: {},
   },
-  async ({ resource }) => {
-    const qs = resource ? `?resource=${encodeURIComponent(resource)}` : "";
-    return asText(await getJson(`/v1/x402-trust-preview${qs}`));
-  },
+  async () => asText(await getJson("/v1/x402-trust-preview")),
 );
 
 server.registerTool(
