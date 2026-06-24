@@ -105,7 +105,7 @@ function asText(obj: unknown): { content: { type: "text"; text: string }[] } {
   return { content: [{ type: "text", text: JSON.stringify(obj, null, 2) }] };
 }
 
-const server = new McpServer({ name: "x402-trust", version: "1.2.0" });
+const server = new McpServer({ name: "x402-trust", version: "1.2.1" });
 
 server.registerTool(
   "x402_ecosystem_stats",
@@ -134,7 +134,7 @@ server.registerTool(
   {
     title: "x402 trust preview for an endpoint (free)",
     description:
-      "FREE teaser of x402_trust_score for a SPECIFIC x402 endpoint: returns the headline verdict ('recommendation': proceed|caution|avoid), the letter grade, an approximate score, flag counts, and any safety-critical error-flag codes (e.g. 'unresolved-url-template' — a trap we catch even for endpoints we haven't observed yet). The exact score, full breakdown, advertised price, and on-chain settlement proof are withheld (listed under 'unlockedByPaidCall' — get them via x402_trust_score). Call with no resource to preview the current #1 leaderboard endpoint. Use this to try the service for free before paying.",
+      "FREE teaser of x402_trust_score for a SPECIFIC x402 endpoint: returns the qualitative verdict ('recommendation': proceed|caution|avoid), the letter grade, flag counts, the error+warn flag CODES (e.g. 'unresolved-url-template' — a trap we catch even for endpoints we haven't observed yet), and per-axis direction indicators in 'signals' that name WHICH axis wobbles (compliance/price/freshness/payTo/…) without the value. 'wouldChangeWith' lists the axes the paid call could FLIP the decision on, and on a 'caution' verdict an 'ambiguity' block flags the verdict as unresolved. Deliberately withheld (paid only, listed in 'unlockedByPaidCall'): the exact score & scoreRange, advertised price, current payTo, live re-probe, and on-chain settlement figures — get them via x402_trust_score. Call with no resource to preview the #1 leaderboard endpoint. Try before you pay.",
     inputSchema: {
       resource: z
         .string()
