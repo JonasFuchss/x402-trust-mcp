@@ -105,7 +105,7 @@ function asText(obj: unknown): { content: { type: "text"; text: string }[] } {
   return { content: [{ type: "text", text: JSON.stringify(obj, null, 2) }] };
 }
 
-const server = new McpServer({ name: "x402-trust", version: "1.3.0" });
+const server = new McpServer({ name: "x402-trust", version: "1.3.1" });
 
 server.registerTool(
   "x402_ecosystem_stats",
@@ -187,12 +187,43 @@ server.registerTool(
   },
 );
 
-/** Add a human-readable hint when a paid call returned only a quote. */
+/** Shape the tool result for the agent, with an accurate, non-contradictory
+ * hint. Three distinct cases:
+ *   1. paid — the server accepted payment and returned the answer.
+ *   2. status !== 402 — the server gave a DEFINITIVE non-payment response
+ *      (e.g. 404 "endpoint not in our observation set", 400 bad input, 5xx).
+ *      This can happen AFTER auto-pay was attempted: the price was within budget,
+ *      we paid, and the server still declined for a reason unrelated to payment.
+ *      Surface the server's own response — never the price-ceiling hint, which
+ *      would be wrong (and self-contradictory when the quote was under the cap).
+ *   3. status === 402 — the request genuinely still needs payment: either
+ *      auto-pay is off, or the quote exceeded a budget/guard. Show quote + hint.
+ */
 function decorate(r: Awaited<ReturnType<typeof paidPost>>): unknown {
   if (r.paid) return { paid: true, result: r.data, ...(r.paymentResponse ? { payment: r.paymentResponse } : {}) };
+
+  // Case 2: a real, non-payment server response. The call reached the endpoint
+  // and got a verdict that paying again won't change.
+  if (r.status !== 402) {
+    return {
+      paid: false,
+      status: r.status,
+      // If a quote was parsed, auto-pay was attempted; the server rejected for a
+      // reason OTHER than payment. Make that explicit so the agent doesn't read
+      // this as a pricing problem. The server marks notCharged when it declined
+      // before settling.
+      ...(r.quote && AUTO_PAY
+        ? { note: `Auto-pay was attempted (quote $${r.quote.amountUsd}, within budget) but the server returned HTTP ${r.status} for a non-payment reason. See detail.` }
+        : {}),
+      detail: r.data,
+    };
+  }
+
+  // Case 3: genuinely still 402 — payment required and not made.
   if (r.quote) {
     return {
       paid: false,
+      status: 402,
       quote: r.quote,
       hint: AUTO_PAY
         ? `Quote $${r.quote.amountUsd} not auto-paid (exceeds X402_MAX_USD $${MAX_USD}, or a spend/asset guard blocked it). See detail.`
