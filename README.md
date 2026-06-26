@@ -8,6 +8,8 @@ x402 ecosystem on Base 24/7: uptime probes, 402-envelope spec compliance,
 advertised-price history, and **real on-chain USDC settlement volume** per
 endpoint.
 
+[![x402-trust-mcp MCP server](https://glama.ai/mcp/servers/JonasFuchss/x402-trust-mcp/badges/card.svg)](https://glama.ai/mcp/servers/JonasFuchss/x402-trust-mcp)
+
 ## Why
 
 Agents increasingly pay x402 endpoints autonomously. But ~⅔ of listed x402
