@@ -12,8 +12,8 @@ endpoint.
 
 ## Why
 
-Agents increasingly pay x402 endpoints autonomously. But ~⅔ of listed x402
-endpoints are unreachable and ~⅓ of the reachable ones serve non-compliant
+Agents increasingly pay x402 endpoints autonomously. But ~40% of listed x402
+endpoints are unreachable and ~20% of the reachable ones serve non-compliant
 payment envelopes. Before your agent sends USDC to an unknown endpoint, ask:
 *is it alive, compliant, and does anyone actually pay it?*
 
