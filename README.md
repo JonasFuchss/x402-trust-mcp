@@ -26,10 +26,48 @@ payment envelopes. Before your agent sends USDC to an unknown endpoint, ask:
 | `x402_trust_preview` | free | Showcase of what `x402_trust_score` returns — you don't choose the endpoint. Returns the **complete** paid-grade report (exact score, full breakdown, advertised price, on-chain settlement figures, all flags) for **three** endpoints: the best-scored, the median, and the worst-scored. See the full data shape across the quality range before you pay. To score *your own* endpoint, use `x402_trust_score` (paid). Takes no arguments. |
 | `x402_trust_score` | paid | Trust score (0-100, grade A-F) for a specific endpoint, plus a machine-readable pay/don't-pay verdict, the advertised price, a confidence band, and structured flags — everything to decide in one call. |
 | `x402_endpoint_history` | paid | Observation time-series for a specific endpoint (listings, price changes, probes). |
+| `x402_trust_bulk` | paid | Score up to 500 endpoints in a single paid call from cached full-density snapshots. Picks the cheapest tier that fits your list (10/50/100/200/500). Returns score, grade, recommendation, confidence, and `probed_at` per endpoint. |
+| `x402_watch_create` | paid | Start monitoring one endpoint for 30 days. Alerts on payTo change (takeover signal), price/asset/network change, spec regression, delisting, and liveness. Returns a one-time bearer secret + poll URL + `next_steps`. |
+| `x402_watch_events` | free | Poll the append-only event log of an active watch using the watch id and one-time secret. Use `since` (highest previous `event_id`) to page forward; nothing between polls is lost. |
+| `x402_watch_renew` | paid | Extend an active watch by another 30 days. The secret stays the same. |
 
-Paid tools cost a few tenths of a cent, charged over x402 (USDC on Base). If you
+Paid tools cost a few tenths of a cent to ~$0.50, charged over x402 (USDC on Base). If you
 set `X402_PRIVATE_KEY`, the server **auto-pays** within your `X402_MAX_USD`
 limit; otherwise it returns the price quote for your host to pay.
+
+### Bulk scoring (`x402_trust_bulk`)
+
+The bulk tool is the scale axis: score up to 500 endpoints in one call from the
+same cached snapshots that power the leaderboard. It auto-selects the cheapest
+tier that fits your request:
+
+| Tier | Max endpoints | Approx. price |
+|---|---|---|
+| 10 | 10 | ~$0.045 |
+| 50 | 50 | ~$0.20 |
+| 100 | 100 | ~$0.325 |
+| 200 | 200 | ~$0.40 |
+| 500 | 500 | ~$0.50 |
+
+Each result carries `score`, `grade`, `recommendation`, `confidence`, and
+`probed_at` so you can decide if the vintage is fresh enough. URLs not in the
+observation set return `found: false`; you still pay for the batch because the
+lookup work is done.
+
+### Watch / alerting (`x402_watch_create`, `x402_watch_events`, `x402_watch_renew`)
+
+- **Create** (`x402_watch_create`) buys 30 days of change monitoring for one
+  endpoint. Pay over x402; receive a one-time bearer `secret`, a `poll_url`, a
+  `renew_url`, and machine-readable `next_steps`.
+- **Poll** (`x402_watch_events`) reads the append-only event log. Start without
+  `since`; afterwards pass the highest returned `event_id` as the next `since`.
+  Send `Authorization: Bearer <secret>` — this is done automatically by the tool.
+- **Renew** (`x402_watch_renew`) extends the watch before `expires_at`. The
+  secret stays the same.
+
+Optional push delivery to a signed HTTPS webhook or Slack/Discord incoming
+webhook can be configured at creation time. If you use a webhook, verify the
+`x-signature` header equals `sha256=` + HMAC-SHA256(body, secret).
 
 ### `x402_trust_score` result
 

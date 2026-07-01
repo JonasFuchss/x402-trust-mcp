@@ -13,6 +13,10 @@
  *   x402_trust_preview     (free)  full sample reports for 3 fixed endpoints (best/median/worst)
  *   x402_trust_score       (paid)  per-endpoint score 0-100 + breakdown
  *   x402_endpoint_history  (paid)  per-endpoint observation time-series
+ *   x402_trust_bulk        (paid)  score many endpoints in one call
+ *   x402_watch_create      (paid)  start a 30-day endpoint watch
+ *   x402_watch_events      (free)  poll a watch's append-only event log
+ *   x402_watch_renew       (paid)  extend a watch by 30 days
  *
  * Paid tools quote the price and, if X402_PRIVATE_KEY is set (a funded Base
  * USDC wallet) and the quote is within X402_MAX_USD, auto-pay over x402.
@@ -83,12 +87,22 @@ const AUTO_PAY = PRIVATE_KEY !== undefined && MAX_USD > 0;
 const spendTracker = new SpendTracker(MAX_TOTAL_USD, MAX_CALLS);
 const PAY_KEY: Hex | undefined = AUTO_PAY ? PRIVATE_KEY : undefined;
 
-async function getJson(path: string): Promise<unknown> {
+/** Exported for unit tests only. */
+export async function getJson(
+  path: string,
+  opts: { headers?: Record<string, string>; params?: Record<string, string | number | undefined> } = {},
+): Promise<unknown> {
+  const url = new URL(path, API_BASE + "/");
+  if (opts.params) {
+    for (const [k, v] of Object.entries(opts.params)) {
+      if (v !== undefined && v !== "") url.searchParams.set(k, String(v));
+    }
+  }
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
-    const res = await fetch(`${API_BASE}${path}`, {
-      headers: { accept: "application/json", "user-agent": "x402-trust-mcp/1.0" },
+    const res = await fetch(url.toString(), {
+      headers: { accept: "application/json", "user-agent": "x402-trust-mcp/1.0", ...(opts.headers ?? {}) },
       signal: ctrl.signal,
     });
     if (!res.ok) {
@@ -105,7 +119,7 @@ function asText(obj: unknown): { content: { type: "text"; text: string }[] } {
   return { content: [{ type: "text", text: JSON.stringify(obj, null, 2) }] };
 }
 
-const server = new McpServer({ name: "x402-trust", version: "1.3.1" });
+const server = new McpServer({ name: "x402-trust", version: "1.4.0" });
 
 server.registerTool(
   "x402_ecosystem_stats",
@@ -187,6 +201,141 @@ server.registerTool(
   },
 );
 
+const BULK_TIERS: readonly { max: number; path: string }[] = [
+  { max: 10, path: "/v1/x402-trust-bulk-10" },
+  { max: 50, path: "/v1/x402-trust-bulk-50" },
+  { max: 100, path: "/v1/x402-trust-bulk-100" },
+  { max: 200, path: "/v1/x402-trust-bulk-200" },
+  { max: 500, path: "/v1/x402-trust-bulk-500" },
+];
+
+export function pickBulkTier(count: number, requestedTier?: number): { max: number; path: string } {
+  if (count > BULK_TIERS[BULK_TIERS.length - 1]!.max) {
+    throw new Error(`too many resources: maximum is ${BULK_TIERS[BULK_TIERS.length - 1]!.max}; got ${count}`);
+  }
+  if (requestedTier !== undefined) {
+    const t = BULK_TIERS.find((tier) => tier.max === requestedTier);
+    if (!t) throw new Error(`invalid tier ${requestedTier}; valid tiers are ${BULK_TIERS.map((x) => x.max).join(", ")}`);
+    if (count > t.max) throw new Error(`tier ${requestedTier} accepts at most ${t.max} resources; got ${count}`);
+    return t;
+  }
+  for (const tier of BULK_TIERS) {
+    if (count <= tier.max) return tier;
+  }
+  throw new Error("unreachable");
+}
+
+server.registerTool(
+  "x402_trust_bulk",
+  {
+    title: "x402 bulk trust scoring (paid)",
+    description:
+      "Score up to 500 x402 endpoints in a SINGLE paid call. Returns the authoritative full-density trust score (0-100, grade A-F, recommendation proceed|caution|avoid), confidence, and `probed_at` timestamp for each requested resource from cached snapshots. The smallest tier that fits your request is selected automatically (10/50/100/200/500 endpoints; ~$0.045/$0.20/$0.325/$0.40/$0.50). Resources not in our observation set return `found:false` instead of a score; you still pay for the batch. No live re-probe — for the freshest single score use x402_trust_score. Pay-per-call over x402; auto-pays if a wallet is configured, otherwise returns the price quote.",
+    inputSchema: {
+      resources: z
+        .array(z.string())
+        .min(1)
+        .max(500)
+        .describe("List of full x402 resource URLs (https://...) to score. Duplicates are ignored; max 500."),
+      tier: z.union([z.literal(10), z.literal(50), z.literal(100), z.literal(200), z.literal(500)])
+        .optional()
+        .describe("Optional fixed tier size. If omitted, the cheapest tier that fits `resources` is used."),
+    },
+  },
+  async ({ resources, tier }) => {
+    const unique = [...new Set(resources.map((r) => r.trim()))];
+    const selected = pickBulkTier(unique.length, tier);
+    const r = await paidPost({
+      url: `${API_BASE}${selected.path}`,
+      body: { resources: unique },
+      ...(PAY_KEY ? { privateKey: PAY_KEY } : {}),
+      maxAmountUsd: MAX_USD,
+      timeoutMs: TIMEOUT_MS,
+      spendTracker,
+    });
+    return asText({ tier: selected.max, ...(decorate(r) as object) });
+  },
+);
+
+server.registerTool(
+  "x402_watch_create",
+  {
+    title: "x402 watch — create 30-day endpoint monitor (paid)",
+    description:
+      "Start monitoring ONE x402 endpoint for 30 days. Get alerted on changes that break autonomous payment: payTo changes (possible takeover/rug), price changes, asset/network changes, 402-spec regressions, delisting, and liveness down/recovered. Returns a one-time bearer secret + poll URL + renew URL + machine-readable `next_steps`. Use x402_watch_events to poll the append-only log, or configure push delivery to a signed HTTPS webhook or Slack/Discord. Pay-per-call over x402 (~$0.20); auto-pays if a wallet is configured, otherwise returns the price quote.",
+    inputSchema: {
+      endpoint: z.string().describe("Full x402 resource URL to watch. It must already be in our observation set."),
+      events: z.array(z.string()).optional().describe("Event types to subscribe to (default all): payto_change, price_change, asset_network_change, spec_regression, delisting, liveness_down, liveness_recovered, latency_regression."),
+      liveness_sensitivity_n: z.number().int().min(1).max(10).optional()
+        .describe("Consecutive missed probes before liveness_down surfaces to you (1=paranoid … 10=relaxed; default 2)."),
+      webhook_url: z.string().optional().describe("Optional signed HTTPS webhook URL for push delivery."),
+      slack_url: z.string().optional().describe("Optional Slack or Discord incoming webhook URL for push delivery."),
+    },
+  },
+  async ({ endpoint, events, liveness_sensitivity_n, webhook_url, slack_url }) => {
+    const body: Record<string, unknown> = { endpoint };
+    if (events !== undefined) body.events = events;
+    if (liveness_sensitivity_n !== undefined) body.liveness_sensitivity_n = liveness_sensitivity_n;
+    if (webhook_url !== undefined || slack_url !== undefined) {
+      body.delivery = { ...(webhook_url ? { webhook_url } : {}), ...(slack_url ? { slack_url } : {}) };
+    }
+    const r = await paidPost({
+      url: `${API_BASE}/v1/watch-endpoint-30d`,
+      body,
+      ...(PAY_KEY ? { privateKey: PAY_KEY } : {}),
+      maxAmountUsd: MAX_USD,
+      timeoutMs: TIMEOUT_MS,
+      spendTracker,
+    });
+    return asText(decorateWatch(r));
+  },
+);
+
+server.registerTool(
+  "x402_watch_events",
+  {
+    title: "x402 watch — poll event log (free)",
+    description:
+      "Read the append-only event log for an active x402 watch. Nothing that happened between two polls is lost. Provide the watch_id and the one-time secret returned by x402_watch_create. Optional `since` cursor: start without it, then use the highest returned `event_id` as the next `since` value. If the watch has push delivery, still poll to reconcile missed webhooks.",
+    inputSchema: {
+      watch_id: z.string().describe("Watch id returned by x402_watch_create."),
+      secret: z.string().describe("The one-time bearer secret returned by x402_watch_create."),
+      since: z.string().optional().describe("Cursor: the highest event_id from a previous poll. Omit for the first poll."),
+    },
+  },
+  async ({ watch_id, secret, since }) => {
+    return asText(
+      await getJson(`/v1/watch/${encodeURIComponent(watch_id)}/events`, {
+        headers: { Authorization: `Bearer ${secret}` },
+        params: { ...(since ? { since } : {}) },
+      }),
+    );
+  },
+);
+
+server.registerTool(
+  "x402_watch_renew",
+  {
+    title: "x402 watch — renew 30 days (paid)",
+    description:
+      "Extend an active x402 watch by another 30 days before it expires. The secret stays the same. Pay-per-call over x402 (~$0.20); auto-pays if a wallet is configured, otherwise returns the price quote.",
+    inputSchema: {
+      watch_id: z.string().describe("Watch id returned by x402_watch_create."),
+    },
+  },
+  async ({ watch_id }) => {
+    const r = await paidPost({
+      url: `${API_BASE}/v1/watch/${encodeURIComponent(watch_id)}/renew`,
+      body: {},
+      ...(PAY_KEY ? { privateKey: PAY_KEY } : {}),
+      maxAmountUsd: MAX_USD,
+      timeoutMs: TIMEOUT_MS,
+      spendTracker,
+    });
+    return asText(decorateWatch(r));
+  },
+);
+
 /** Shape the tool result for the agent, with an accurate, non-contradictory
  * hint. Three distinct cases:
  *   1. paid — the server accepted payment and returned the answer.
@@ -232,6 +381,18 @@ function decorate(r: Awaited<ReturnType<typeof paidPost>>): unknown {
     };
   }
   return { paid: false, status: r.status, detail: r.data };
+}
+
+/** Like `decorate`, but adds a prominent secret-once reminder for watch create. */
+function decorateWatch(r: Awaited<ReturnType<typeof paidPost>>): unknown {
+  const base = decorate(r) as Record<string, unknown>;
+  if (r.paid && typeof r.data === "object" && r.data !== null && "secret" in r.data) {
+    return {
+      ...base,
+      important: "The `secret` above is shown only once. Store it in a secrets manager now; if lost, create a new watch.",
+    };
+  }
+  return base;
 }
 
 async function main(): Promise<void> {
