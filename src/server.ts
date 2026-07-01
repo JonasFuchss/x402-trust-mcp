@@ -16,6 +16,8 @@
  *   x402_trust_bulk        (paid)  score many endpoints in one call
  *   x402_watch_create      (paid)  start a 30-day endpoint watch
  *   x402_watch_events      (free)  poll a watch's append-only event log
+ *   x402_watch_edit        (free)  change delivery URLs / sensitivity / events
+ *   x402_watch_cancel      (free)  cancel a watch early
  *   x402_watch_renew       (paid)  extend a watch by 30 days
  *
  * Paid tools quote the price and, if X402_PRIVATE_KEY is set (a funded Base
@@ -102,7 +104,7 @@ export async function getJson(
   const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
     const res = await fetch(url.toString(), {
-      headers: { accept: "application/json", "user-agent": "x402-trust-mcp/1.0", ...(opts.headers ?? {}) },
+      headers: { accept: "application/json", "user-agent": "x402-trust-mcp/1.5.0", ...(opts.headers ?? {}) },
       signal: ctrl.signal,
     });
     if (!res.ok) {
@@ -119,7 +121,41 @@ function asText(obj: unknown): { content: { type: "text"; text: string }[] } {
   return { content: [{ type: "text", text: JSON.stringify(obj, null, 2) }] };
 }
 
-const server = new McpServer({ name: "x402-trust", version: "1.4.2" });
+/** Bearer-authed request helper for free watch-management routes (edit/cancel/events). */
+async function authedRequest(
+  method: string,
+  path: string,
+  secret: string,
+  body?: Record<string, unknown>,
+): Promise<unknown> {
+  const url = new URL(path, API_BASE + "/");
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+  try {
+    const init: RequestInit = {
+      method,
+      headers: {
+        accept: "application/json",
+        "content-type": "application/json",
+        "user-agent": "x402-trust-mcp/1.5.0",
+        Authorization: `Bearer ${secret}`,
+      },
+      signal: ctrl.signal,
+    };
+    if (body !== undefined) init.body = JSON.stringify(body);
+    const res = await fetch(url.toString(), init);
+    const text = await res.text();
+    const json = text ? (JSON.parse(text) as unknown) : {};
+    if (!res.ok) {
+      return { error: `HTTP ${res.status} from ${path}`, ...(typeof json === "object" && json !== null ? (json as Record<string, unknown>) : {}) };
+    }
+    return json;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+const server = new McpServer({ name: "x402-trust", version: "1.5.0" });
 
 server.registerTool(
   "x402_ecosystem_stats",
@@ -257,28 +293,31 @@ server.registerTool(
   },
 );
 
+const urlOrUrls = z.union([z.string(), z.array(z.string())]).optional();
+
 server.registerTool(
   "x402_watch_create",
   {
     title: "x402 watch — create 30-day endpoint monitor (paid)",
     description:
-      "Start monitoring ONE x402 endpoint for 30 days. Get alerted on changes that break autonomous payment: payTo changes (possible takeover/rug), price changes, asset/network changes, 402-spec regressions, delisting, and liveness down/recovered. Returns a one-time bearer secret + poll URL + renew URL + machine-readable `next_steps`. Use x402_watch_events to poll the append-only log, or configure push delivery to a signed HTTPS webhook or Slack/Discord. If you pass webhook_url/slack_url, it is connection-tested BEFORE payment — an unreachable URL is rejected with no charge (retry with a corrected URL), and on success the response reports per-channel delivery in `delivery.connection_test`. Webhook signature: `x-signature` = 'sha256=' + HMAC-SHA256(body) keyed by hex(sha256(secret)), NOT the raw secret. Pay-per-call over x402 (~$0.20); auto-pays if a wallet is configured, otherwise returns the price quote.",
+      "Start monitoring ONE x402 endpoint for 30 days. Get alerted on changes that break autonomous payment: payTo changes (possible takeover/rug), price changes, asset/network changes, 402-spec regressions, delisting, and liveness down/recovered. Returns a one-time bearer secret + poll URL + renew URL + edit URL + cancel URL + machine-readable `next_steps`. Use x402_watch_events to poll the append-only log, or configure push delivery to one or more signed HTTPS webhooks and/or Slack/Discord incoming webhooks (max 5 each). `webhook_url`/`slack_url` accept a single URL string or an array of URLs. All URLs are connection-tested BEFORE payment — unreachable URLs are rejected with no charge (retry with a corrected URL). On success the response reports per-URL delivery in `delivery.connection_test`. Webhook signature: `x-signature` = 'sha256=' + HMAC-SHA256(body) keyed by hex(sha256(secret)), NOT the raw secret. Pay-per-call over x402 (~$0.20); auto-pays if a wallet is configured, otherwise returns the price quote.",
     inputSchema: {
       endpoint: z.string().describe("Full x402 resource URL to watch. It must already be in our observation set."),
       events: z.array(z.string()).optional().describe("Event types to subscribe to (default all): payto_change, price_change, asset_network_change, spec_regression, delisting, liveness_down, liveness_recovered, latency_regression."),
       liveness_sensitivity_n: z.number().int().min(1).max(10).optional()
         .describe("Consecutive missed probes before liveness_down surfaces to you (1=paranoid … 10=relaxed; default 2)."),
-      webhook_url: z.string().optional().describe("Optional signed HTTPS webhook URL for push delivery."),
-      slack_url: z.string().optional().describe("Optional Slack or Discord incoming webhook URL for push delivery."),
+      webhook_url: urlOrUrls.describe("Optional signed HTTPS webhook URL(s) for push delivery. Single string or array; max 5."),
+      slack_url: urlOrUrls.describe("Optional Slack or Discord incoming webhook URL(s). Single string or array; max 5."),
     },
   },
   async ({ endpoint, events, liveness_sensitivity_n, webhook_url, slack_url }) => {
     const body: Record<string, unknown> = { endpoint };
     if (events !== undefined) body.events = events;
     if (liveness_sensitivity_n !== undefined) body.liveness_sensitivity_n = liveness_sensitivity_n;
-    if (webhook_url !== undefined || slack_url !== undefined) {
-      body.delivery = { ...(webhook_url ? { webhook_url } : {}), ...(slack_url ? { slack_url } : {}) };
-    }
+    const delivery: Record<string, unknown> = {};
+    if (webhook_url !== undefined) delivery.webhook_url = webhook_url;
+    if (slack_url !== undefined) delivery.slack_url = slack_url;
+    if (Object.keys(delivery).length > 0) body.delivery = delivery;
     const r = await paidPost({
       url: `${API_BASE}/v1/watch-endpoint-30d`,
       body,
@@ -310,6 +349,56 @@ server.registerTool(
         params: { ...(since ? { since } : {}) },
       }),
     );
+  },
+);
+
+server.registerTool(
+  "x402_watch_edit",
+  {
+    title: "x402 watch — edit delivery URLs / sensitivity / events (free)",
+    description:
+      "Edit an active watch: change webhook/Slack URLs, liveness sensitivity, or subscribed events. Bearer-authed with the secret from x402_watch_create. Newly-added URLs are connection-tested before the change is persisted; if any new URL fails, the existing config is unchanged. Delivery fields are full-replace per channel (omit to leave that channel unchanged). Returns the updated watch view.",
+    inputSchema: {
+      watch_id: z.string().describe("Watch id returned by x402_watch_create."),
+      secret: z.string().describe("The one-time bearer secret returned by x402_watch_create."),
+      events: z.array(z.string()).optional().describe("Event types to subscribe to (default all). Omit to keep current events."),
+      liveness_sensitivity_n: z.number().int().min(1).max(10).optional().describe("1=paranoid … 10=relaxed. Omit to keep current value."),
+      webhook_url: urlOrUrls.describe("Replace webhook URL(s). Single string or array; max 5. Omit to keep current webhook(s)."),
+      slack_url: urlOrUrls.describe("Replace Slack/Discord URL(s). Single string or array; max 5. Omit to keep current URL(s)."),
+    },
+  },
+  async ({ watch_id, secret, events, liveness_sensitivity_n, webhook_url, slack_url }) => {
+    const body: Record<string, unknown> = {};
+    if (events !== undefined) body.events = events;
+    if (liveness_sensitivity_n !== undefined) body.liveness_sensitivity_n = liveness_sensitivity_n;
+    const delivery: Record<string, unknown> = {};
+    if (webhook_url !== undefined) delivery.webhook_url = webhook_url;
+    if (slack_url !== undefined) delivery.slack_url = slack_url;
+    if (Object.keys(delivery).length > 0) body.delivery = delivery;
+    return asText(
+      await authedRequest(
+        "PATCH",
+        `/v1/watch/${encodeURIComponent(watch_id)}`,
+        secret,
+        Object.keys(body).length > 0 ? body : undefined,
+      ),
+    );
+  },
+);
+
+server.registerTool(
+  "x402_watch_cancel",
+  {
+    title: "x402 watch — cancel early (free)",
+    description:
+      "Soft-cancel a watch immediately. Probing drops back to normal cadence as soon as no active watches cover the endpoint. Bearer-authed with the secret from x402_watch_create. Free and idempotent.",
+    inputSchema: {
+      watch_id: z.string().describe("Watch id returned by x402_watch_create."),
+      secret: z.string().describe("The one-time bearer secret returned by x402_watch_create."),
+    },
+  },
+  async ({ watch_id, secret }) => {
+    return asText(await authedRequest("DELETE", `/v1/watch/${encodeURIComponent(watch_id)}`, secret));
   },
 );
 

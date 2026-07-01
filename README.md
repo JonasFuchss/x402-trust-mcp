@@ -25,7 +25,7 @@ payment envelopes. Before your agent sends USDC to an unknown endpoint, ask:
 | `x402_trust_score` | paid | Trust score (0-100, grade A-F) for a specific endpoint, plus a machine-readable pay/don't-pay verdict, the advertised price, a confidence band, and structured flags — everything to decide in one call. |
 | `x402_endpoint_history` | paid | Observation time-series for a specific endpoint (listings, price changes, probes). |
 | `x402_trust_bulk` | paid | Score up to 500 endpoints in a single paid call from cached full-density snapshots. Picks the cheapest tier that fits your list (10/50/100/200/500). Returns score, grade, recommendation, confidence, and `probed_at` per endpoint. |
-| `x402_watch_create` | paid | Start monitoring one endpoint for 30 days. Alerts on payTo change (takeover signal), price/asset/network change, spec regression, delisting, and liveness. Returns a one-time bearer secret + poll URL + `next_steps`. |
+| `x402_watch_create` | paid | Start monitoring one endpoint for 30 days. Alerts on payTo change (takeover signal), price/asset/network change, spec regression, delisting, and liveness. Supports up to 5 webhook + 5 Slack/Discord URLs per watch, all connection-tested before payment. Returns a one-time bearer secret + poll/edit/cancel URLs + `next_steps`. |
 | `x402_watch_events` | free | Poll the append-only event log of an active watch using the watch id and one-time secret. Use `since` (highest previous `event_id`) to page forward; nothing between polls is lost. |
 | `x402_watch_renew` | paid | Extend an active watch by another 30 days. The secret stays the same. |
 
@@ -67,12 +67,22 @@ not in the observation set return `found: false`; you still pay for the batch.
 - **Renew** (`x402_watch_renew`) extends the watch before `expires_at`. The
   secret stays the same.
 
-Optional push delivery to a signed HTTPS webhook or Slack/Discord incoming
-webhook can be configured at creation time. Any `webhook_url`/`slack_url` is
-**connection-tested before you are charged**: the server POSTs a signed
-`connection_test` ping and, if it can't be delivered (3 attempts), rejects the
-watch with `notCharged: true` so you can retry with a corrected URL. On success
-the create response reports per-channel delivery under `delivery.connection_test`.
+Optional push delivery to one or more signed HTTPS webhooks and/or Slack/Discord
+incoming webhooks can be configured at creation time (up to 5 of each per watch).
+`webhook_url` and `slack_url` accept a single URL string or an array of URLs.
+Any URL is **connection-tested before you are charged**: the server POSTs a
+signed `connection_test` ping and, if it can't be delivered (3 attempts),
+rejects the watch with `notCharged: true` so you can retry with a corrected URL.
+On success the create response reports per-URL delivery under
+`delivery.connection_test`.
+
+- `x402_watch_events` polls the append-only log (free).
+- `x402_watch_edit` changes webhook/Slack URLs, liveness sensitivity, or events
+  for free (bearer-authed). New URLs are connection-tested before the change is
+  persisted; if any new URL fails, the existing config stays unchanged.
+- `x402_watch_cancel` cancels a watch early for free (bearer-authed), returning
+  the endpoint to normal probe cadence immediately.
+- `x402_watch_renew` extends a watch by another 30 days (paid).
 
 If you use a webhook, verify the `x-signature` header equals `sha256=` +
 HMAC-SHA256(body) **keyed by the SHA-256 hex digest of your secret** — i.e. the
