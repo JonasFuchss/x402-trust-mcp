@@ -335,18 +335,19 @@ server.registerTool(
   {
     title: "x402 watch — poll event log (free)",
     description:
-      "Read the append-only event log for an active x402 watch. Nothing that happened between two polls is lost. Provide the watch_id and the one-time secret returned by x402_watch_create. Optional `since` cursor: start without it, then use the highest returned `event_id` as the next `since` value. If the watch has push delivery, still poll to reconcile missed webhooks.",
+      "Read the append-only event log for an active x402 watch. Returns two streams: `events` (endpoint changes — payTo/price/asset/spec/delisting/liveness) and `watch_events` (lifecycle feedback — created/edited/cancelled/renewed/expiring/expired). Nothing between two polls is lost. Provide the watch_id and the one-time secret from x402_watch_create. Advance `since` with the returned `next_cursor` (endpoint events) and `watch_since` with `watch_events_cursor` (lifecycle events). If the watch has push delivery, still poll to reconcile missed webhooks.",
     inputSchema: {
       watch_id: z.string().describe("Watch id returned by x402_watch_create."),
       secret: z.string().describe("The one-time bearer secret returned by x402_watch_create."),
-      since: z.string().optional().describe("Cursor: the highest event_id from a previous poll. Omit for the first poll."),
+      since: z.string().optional().describe("Endpoint-event cursor: the `next_cursor` from a previous poll. Omit for the first poll."),
+      watch_since: z.string().optional().describe("Lifecycle-event cursor: the `watch_events_cursor` from a previous poll. Omit for the first poll."),
     },
   },
-  async ({ watch_id, secret, since }) => {
+  async ({ watch_id, secret, since, watch_since }) => {
     return asText(
       await getJson(`/v1/watch/${encodeURIComponent(watch_id)}/events`, {
         headers: { Authorization: `Bearer ${secret}` },
-        params: { ...(since ? { since } : {}) },
+        params: { ...(since ? { since } : {}), ...(watch_since ? { watch_since } : {}) },
       }),
     );
   },

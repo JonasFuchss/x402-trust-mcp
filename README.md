@@ -78,7 +78,11 @@ rejects the watch with `notCharged: true` so you can retry with a corrected URL.
 On success the create response reports per-URL delivery under
 `delivery.connection_test`.
 
-- `x402_watch_events` polls the append-only log (free).
+- `x402_watch_events` polls the append-only log (free). It returns two streams:
+  `events` (endpoint changes) and `watch_events` (lifecycle feedback —
+  created / edited / cancelled / renewed / expiring / expired), each with its own
+  cursor (`next_cursor` / `watch_events_cursor`). Every alert is timestamped
+  (`observed_at_iso`).
 - `x402_watch_edit` changes webhook/Slack URLs, liveness sensitivity, or events
   for free (bearer-authed). New URLs are connection-tested before the change is
   persisted; if any new URL fails, the existing config stays unchanged.
