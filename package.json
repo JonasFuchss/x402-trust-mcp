@@ -1,6 +1,6 @@
 {
   "name": "x402-trust-mcp",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "mcpName": "io.github.JonasFuchss/x402-trust-mcp",
   "type": "module",
   "description": "MCP server for x402 endpoint trust & reliability data. Free ecosystem stats, leaderboard, trust preview, and watch polling; paid per-endpoint trust scores, bulk scoring, endpoint history, and 30-day watches over x402, with optional auto-pay. Backed by x402.fuchss.app's 24/7 monitoring of the x402 ecosystem (Base + Solana).",

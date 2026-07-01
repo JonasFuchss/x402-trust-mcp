@@ -104,7 +104,7 @@ export async function getJson(
   const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
     const res = await fetch(url.toString(), {
-      headers: { accept: "application/json", "user-agent": "x402-trust-mcp/1.5.0", ...(opts.headers ?? {}) },
+      headers: { accept: "application/json", "user-agent": "x402-trust-mcp/1.5.1", ...(opts.headers ?? {}) },
       signal: ctrl.signal,
     });
     if (!res.ok) {
@@ -137,7 +137,7 @@ async function authedRequest(
       headers: {
         accept: "application/json",
         "content-type": "application/json",
-        "user-agent": "x402-trust-mcp/1.5.0",
+        "user-agent": "x402-trust-mcp/1.5.1",
         Authorization: `Bearer ${secret}`,
       },
       signal: ctrl.signal,
@@ -155,7 +155,7 @@ async function authedRequest(
   }
 }
 
-const server = new McpServer({ name: "x402-trust", version: "1.5.0" });
+const server = new McpServer({ name: "x402-trust", version: "1.5.1" });
 
 server.registerTool(
   "x402_ecosystem_stats",
