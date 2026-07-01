@@ -1,3 +1,5 @@
+[![x402-trust-mcp MCP server](https://glama.ai/mcp/servers/JonasFuchss/x402-trust-mcp/badges/card.svg)](https://glama.ai/mcp/servers/JonasFuchss/x402-trust-mcp)
+
 # x402-trust-mcp
 
 An [MCP](https://modelcontextprotocol.io) server that lets your agent check the
