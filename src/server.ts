@@ -119,7 +119,7 @@ function asText(obj: unknown): { content: { type: "text"; text: string }[] } {
   return { content: [{ type: "text", text: JSON.stringify(obj, null, 2) }] };
 }
 
-const server = new McpServer({ name: "x402-trust", version: "1.4.1" });
+const server = new McpServer({ name: "x402-trust", version: "1.4.2" });
 
 server.registerTool(
   "x402_ecosystem_stats",
