@@ -1,5 +1,3 @@
-[![x402-trust-mcp MCP server](https://glama.ai/mcp/servers/JonasFuchss/x402-trust-mcp/badges/card.svg)](https://glama.ai/mcp/servers/JonasFuchss/x402-trust-mcp)
-
 # x402-trust-mcp
 
 An [MCP](https://modelcontextprotocol.io) server that lets your agent check the
@@ -12,8 +10,8 @@ endpoint.
 
 ## Why
 
-Agents increasingly pay x402 endpoints autonomously. But ~40% of listed x402
-endpoints are unreachable and ~20% of the reachable ones serve non-compliant
+Agents increasingly pay x402 endpoints autonomously. But ~⅔ of listed x402
+endpoints are unreachable and ~⅓ of the reachable ones serve non-compliant
 payment envelopes. Before your agent sends USDC to an unknown endpoint, ask:
 *is it alive, compliant, and does anyone actually pay it?*
 
@@ -38,8 +36,8 @@ limit; otherwise it returns the price quote for your host to pay.
 ### Bulk scoring (`x402_trust_bulk`)
 
 The bulk tool is the scale axis: score up to 500 endpoints in one call from the
-same cached snapshots that power the leaderboard. It auto-selects the cheapest
-tier that fits your request:
+same data that powers the leaderboard. It auto-selects the cheapest tier that
+fits your request:
 
 | Tier | Max endpoints | Approx. price |
 |---|---|---|
@@ -49,10 +47,14 @@ tier that fits your request:
 | 200 | 200 | ~$0.40 |
 | 500 | 500 | ~$0.50 |
 
-Each result carries `score`, `grade`, `recommendation`, `confidence`, and
-`probed_at` so you can decide if the vintage is fresh enough. URLs not in the
-observation set return `found: false`; you still pay for the batch because the
-lookup work is done.
+Cached rows older than ~15 minutes are recomputed on-demand from the latest
+stored probes and settlements (no live network re-probe), so bulk scores usually
+reflect reality within minutes. Per-request recompute limits apply: at most **50
+rows / 8 seconds** are recomputed; the response tells you via
+`recompute_limit_hit` + `recompute_limit`. Each result carries `score`, `grade`,
+`recommendation`, `confidence`, `probed_at`, `computed_at`, and `recomputed` so
+you can see exactly which rows were freshly computed vs served from cache. URLs
+not in the observation set return `found: false`; you still pay for the batch.
 
 ### Watch / alerting (`x402_watch_create`, `x402_watch_events`, `x402_watch_renew`)
 
