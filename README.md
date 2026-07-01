@@ -68,8 +68,16 @@ not in the observation set return `found: false`; you still pay for the batch.
   secret stays the same.
 
 Optional push delivery to a signed HTTPS webhook or Slack/Discord incoming
-webhook can be configured at creation time. If you use a webhook, verify the
-`x-signature` header equals `sha256=` + HMAC-SHA256(body, secret).
+webhook can be configured at creation time. Any `webhook_url`/`slack_url` is
+**connection-tested before you are charged**: the server POSTs a signed
+`connection_test` ping and, if it can't be delivered (3 attempts), rejects the
+watch with `notCharged: true` so you can retry with a corrected URL. On success
+the create response reports per-channel delivery under `delivery.connection_test`.
+
+If you use a webhook, verify the `x-signature` header equals `sha256=` +
+HMAC-SHA256(body) **keyed by the SHA-256 hex digest of your secret** — i.e. the
+HMAC key is `hex(sha256(secret))`, not the raw secret. (The delivery worker only
+ever holds that hash, never the plaintext secret.)
 
 ### `x402_trust_score` result
 
