@@ -36,6 +36,12 @@ export interface Accept {
   payTo: Address;
   maxTimeoutSeconds?: number;
   extra?: { name?: string; version?: string };
+  /**
+   * Top-level `extensions` block from the 402 (e.g. `{ bazaar: … }`). A
+   * spec-conformant client echoes this back inside the PaymentPayload so the
+   * seller's facilitator can catalog the route. Pure pass-through.
+   */
+  extensions?: Record<string, unknown>;
 }
 
 export interface PaymentQuote {
@@ -119,6 +125,13 @@ export function parseAllAccepts(headerB64: string | null, body: unknown): Accept
     if (!o || typeof o !== "object") return [];
     const accepts = (o as { accepts?: unknown }).accepts;
     if (!Array.isArray(accepts) || accepts.length === 0) return [];
+    // Top-level discovery extensions (e.g. { bazaar: … }) — carried once per
+    // 402, attached to each accept so a paid call can echo it back.
+    const topExtensions = (o as { extensions?: unknown }).extensions;
+    const extensions =
+      topExtensions && typeof topExtensions === "object" && !Array.isArray(topExtensions)
+        ? (topExtensions as Record<string, unknown>)
+        : undefined;
     const result: Accept[] = [];
     for (const a of accepts) {
       const r = a as Record<string, unknown>;
@@ -134,6 +147,7 @@ export function parseAllAccepts(headerB64: string | null, body: unknown): Accept
         payTo: payTo as Address,
         ...(r.maxTimeoutSeconds && typeof r.maxTimeoutSeconds === "number" ? { maxTimeoutSeconds: r.maxTimeoutSeconds } : {}),
         ...(r.extra && typeof r.extra === "object" ? { extra: r.extra as { name?: string; version?: string } } : {}),
+        ...(extensions ? { extensions } : {}),
       });
     }
     return result;
@@ -214,6 +228,9 @@ export async function signPayment(privateKey: Hex, accept: Accept): Promise<stri
     scheme: accept.scheme ?? "exact",
     network: accept.network,
     payload: { signature, authorization },
+    // Echo the 402's discovery extensions so the seller's facilitator can
+    // catalog the route (spec-conformant client behavior). Pass-through only.
+    ...(accept.extensions ? { extensions: accept.extensions } : {}),
   };
   return Buffer.from(JSON.stringify(payload), "utf8").toString("base64");
 }

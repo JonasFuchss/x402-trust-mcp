@@ -1,5 +1,30 @@
 import { describe, it, expect, vi, type Mock } from "vitest";
-import { pickBulkTier, getJson } from "./server.js";
+import { pickBulkTier, getJson, autoPayFailureHint } from "./server.js";
+
+describe("autoPayFailureHint (P2-5)", () => {
+  // MAX_USD defaults to 0.05 in tests (X402_MAX_USD unset).
+  it("names the cap only when the quote strictly exceeds it", () => {
+    expect(autoPayFailureHint(0.2, { error: "payment required; auto-pay disabled" })).toMatch(/exceeds your per-call cap/);
+  });
+  it("does NOT claim 'exceeds' when quote equals the cap", () => {
+    // 0.05 == cap → not an over-cap; falls through to a non-cap reason.
+    expect(autoPayFailureHint(0.05, { error: "insufficient_funds", payer: "0xabc" })).not.toMatch(/exceeds/);
+  });
+  it("detects insufficient funds and surfaces the payer", () => {
+    const h = autoPayFailureHint(0.04, { errorReason: "insufficient_funds", payer: "0xdeadbeef" });
+    expect(h).toMatch(/balance too low/);
+    expect(h).toContain("0xdeadbeef");
+  });
+  it("detects a session spend/call-count guard", () => {
+    expect(autoPayFailureHint(0.04, { error: "cumulative spend cap reached ($0.04 + $0.04 > $0.05)" })).toMatch(/spend\/call-count guard/);
+  });
+  it("detects the asset/chain safety guard", () => {
+    expect(autoPayFailureHint(0.04, { error: "unsafe payment quote: asset 0x.. is not canonical USDC" })).toMatch(/safety guard/);
+  });
+  it("falls back to a detail-pointer for unknown reasons", () => {
+    expect(autoPayFailureHint(0.04, { error: "some novel error" })).toMatch(/See detail/);
+  });
+});
 
 describe("pickBulkTier", () => {
   const cases: [number, number | undefined, number][] = [

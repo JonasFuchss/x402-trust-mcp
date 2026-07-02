@@ -300,10 +300,10 @@ server.registerTool(
   {
     title: "x402 watch — create 30-day endpoint monitor (paid)",
     description:
-      "Start monitoring ONE x402 endpoint for 30 days. Get alerted on changes that break autonomous payment: payTo changes (possible takeover/rug), price changes, asset/network changes, 402-spec regressions, delisting, and liveness down/recovered. Returns a one-time bearer secret + poll URL + renew URL + edit URL + cancel URL + machine-readable `next_steps`. Use x402_watch_events to poll the append-only log, or configure push delivery to one or more signed HTTPS webhooks and/or Slack/Discord incoming webhooks (max 5 each). `webhook_url`/`slack_url` accept a single URL string or an array of URLs. All URLs are connection-tested BEFORE payment — unreachable URLs are rejected with no charge (retry with a corrected URL). On success the response reports per-URL delivery in `delivery.connection_test`. Webhook signature: `x-signature` = 'sha256=' + HMAC-SHA256(body) keyed by hex(sha256(secret)), NOT the raw secret. Pay-per-call over x402 (~$0.20); auto-pays if a wallet is configured, otherwise returns the price quote.",
+      "Start monitoring ONE x402 endpoint for 30 days. Get alerted on changes that break autonomous payment: payTo changes (possible takeover/rug), price changes, asset/network changes, 402-spec regressions, delisting, and liveness down/recovered. A self-healing endpoint that repeatedly blips is auto-detected as `liveness_flapping` and its individual down/up alerts are coalesced into a single flapping notice (plus one 'stopped flapping' notice when it stabilizes) so you are not spammed. Returns a one-time bearer secret + poll URL + renew URL + edit URL + cancel URL + machine-readable `next_steps`. Use x402_watch_events to poll the append-only log, or configure push delivery to one or more signed HTTPS webhooks and/or Slack/Discord incoming webhooks (max 5 each). `webhook_url`/`slack_url` accept a single URL string or an array of URLs. All URLs are connection-tested BEFORE payment — unreachable URLs are rejected with no charge (retry with a corrected URL). On success the response reports per-URL delivery in `delivery.connection_test`. Webhook signature: `x-signature` = 'sha256=' + HMAC-SHA256(body) keyed by hex(sha256(secret)), NOT the raw secret. Pay-per-call over x402 (~$0.20); auto-pays if a wallet is configured, otherwise returns the price quote.",
     inputSchema: {
       endpoint: z.string().describe("Full x402 resource URL to watch. It must already be in our observation set."),
-      events: z.array(z.string()).optional().describe("Event types to subscribe to (default all): payto_change, price_change, asset_network_change, spec_regression, delisting, liveness_down, liveness_recovered, latency_regression."),
+      events: z.array(z.string()).optional().describe("Event types to subscribe to (default all): payto_change, price_change, asset_network_change, spec_regression, delisting, liveness_down, liveness_recovered, liveness_flapping, latency_regression."),
       liveness_sensitivity_n: z.number().int().min(1).max(10).optional()
         .describe("Consecutive missed probes before liveness_down surfaces to you (1=paranoid … 10=relaxed; default 2)."),
       webhook_url: urlOrUrls.describe("Optional signed HTTPS webhook URL(s) for push delivery. Single string or array; max 5."),
@@ -335,7 +335,7 @@ server.registerTool(
   {
     title: "x402 watch — poll event log (free)",
     description:
-      "Read the append-only event log for an active x402 watch. Returns two streams: `events` (endpoint changes — payTo/price/asset/spec/delisting/liveness) and `watch_events` (lifecycle feedback — created/edited/cancelled/renewed/expiring/expired). Nothing between two polls is lost. Provide the watch_id and the one-time secret from x402_watch_create. Advance `since` with the returned `next_cursor` (endpoint events) and `watch_since` with `watch_events_cursor` (lifecycle events). If the watch has push delivery, still poll to reconcile missed webhooks.",
+      "Read the append-only event log for an active x402 watch. Returns two streams: `events` (endpoint changes — payTo/price/asset/spec/delisting/liveness) and `watch_events` (lifecycle feedback — created/edited/cancelled/renewed/expiring/expired). Nothing between two polls is lost. Provide the watch_id and the one-time secret from x402_watch_create. Advance `since` with the returned `next_cursor` (endpoint events) and `watch_since` with `watch_events_cursor` (lifecycle events). Cursors/ids are GLOBAL sequences shared across watches (a watch's first event id may be >1); always page by the returned cursor rather than assuming they start at 1. Cancelled watches remain READABLE until expires_at (no new events accrue). If the watch has push delivery, still poll to reconcile missed webhooks.",
     inputSchema: {
       watch_id: z.string().describe("Watch id returned by x402_watch_create."),
       secret: z.string().describe("The one-time bearer secret returned by x402_watch_create."),
@@ -392,7 +392,7 @@ server.registerTool(
   {
     title: "x402 watch — cancel early (free)",
     description:
-      "Soft-cancel a watch immediately. Probing drops back to normal cadence as soon as no active watches cover the endpoint. Bearer-authed with the secret from x402_watch_create. Free and idempotent.",
+      "Soft-cancel a watch immediately: no new events accrue, but the event log stays READABLE via x402_watch_events until the original expires_at (cancel is not a delete). Probing drops back to normal cadence as soon as no active watches cover the endpoint. Bearer-authed with the secret from x402_watch_create. Free and idempotent.",
     inputSchema: {
       watch_id: z.string().describe("Watch id returned by x402_watch_create."),
       secret: z.string().describe("The one-time bearer secret returned by x402_watch_create."),
@@ -464,13 +464,67 @@ function decorate(r: Awaited<ReturnType<typeof paidPost>>): unknown {
       paid: false,
       status: 402,
       quote: r.quote,
-      hint: AUTO_PAY
-        ? `Quote $${r.quote.amountUsd} not auto-paid (exceeds X402_MAX_USD $${MAX_USD}, or a spend/asset guard blocked it). See detail.`
-        : `Payment required ($${r.quote.amountUsd}). Set X402_PRIVATE_KEY (a funded Base USDC wallet) and X402_MAX_USD>0 to enable auto-pay, or pay this x402 quote with your own wallet.`,
+      hint: AUTO_PAY ? autoPayFailureHint(r.quote.amountUsd, r.data) : notConfiguredHint(r.quote.amountUsd),
       detail: r.data,
     };
   }
   return { paid: false, status: r.status, detail: r.data };
+}
+
+const notConfiguredHint = (amountUsd: number): string =>
+  `Payment required ($${amountUsd}). Set X402_PRIVATE_KEY (a funded Base USDC wallet) and X402_MAX_USD>0 to enable auto-pay, or pay this x402 quote with your own wallet.`;
+
+/**
+ * P2-5: return the hint that actually matches why auto-pay didn't happen, rather
+ * than a static "exceeds cap OR guard blocked" disjunction. Inspects the quote
+ * vs the configured cap and the server/settle detail text. `>` is a strict
+ * over-cap; quote == cap is NOT "exceeds".
+ */
+export function autoPayFailureHint(amountUsd: number, detail: unknown): string {
+  const text = extractDetailText(detail).toLowerCase();
+  // (a) Over the configured per-call ceiling.
+  if (amountUsd > MAX_USD) {
+    return `Quote $${amountUsd} exceeds your per-call cap X402_MAX_USD $${MAX_USD}. Raise X402_MAX_USD to at least $${amountUsd} to auto-pay.`;
+  }
+  // (b) Settlement failed for lack of funds (payer wallet balance too low).
+  if (text.includes("insufficient_funds") || text.includes("insufficient funds") || text.includes("balance")) {
+    const payer = extractPayer(detail);
+    return `Payment signed but settlement failed: wallet balance too low${payer ? ` (payer ${payer})` : ""}. Fund the Base USDC wallet behind X402_PRIVATE_KEY.`;
+  }
+  // (c) Session/total spend or call-count guard tripped.
+  if (text.includes("spend cap") || text.includes("call cap")) {
+    return `Auto-pay blocked by a session spend/call-count guard (X402_MAX_TOTAL_USD / X402_MAX_CALLS). See detail.`;
+  }
+  // (d) SSRF/asset/chain guard refused the quote.
+  if (text.includes("unsafe payment quote") || text.includes("not in allow-list") || text.includes("canonical usdc")) {
+    return `Auto-pay blocked by the asset/chain/payTo safety guard for this quote. See detail.`;
+  }
+  // (e) Fallback: point at the concrete detail rather than guessing.
+  return `Quote $${amountUsd} was not auto-paid. See detail for the specific reason.`;
+}
+
+function extractDetailText(detail: unknown): string {
+  if (typeof detail === "string") return detail;
+  if (detail && typeof detail === "object") {
+    const o = detail as Record<string, unknown>;
+    const parts = [o.error, o.errorReason, o.errorMessage, o.detail, o.reason]
+      .filter((v): v is string => typeof v === "string");
+    if (parts.length > 0) return parts.join(" ");
+    try {
+      return JSON.stringify(detail);
+    } catch {
+      return "";
+    }
+  }
+  return "";
+}
+
+function extractPayer(detail: unknown): string | null {
+  if (detail && typeof detail === "object") {
+    const o = detail as Record<string, unknown>;
+    if (typeof o.payer === "string") return o.payer;
+  }
+  return null;
 }
 
 /** Like `decorate`, but adds a prominent secret-once reminder for watch create. */
