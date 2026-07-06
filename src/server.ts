@@ -13,6 +13,7 @@
  *   x402_trust_preview     (free)  full sample reports for 3 fixed endpoints (best/median/worst)
  *   x402_trust_score       (paid)  per-endpoint score 0-100 + breakdown
  *   x402_endpoint_history  (paid)  per-endpoint observation time-series
+ *   x402_find_alternatives (paid)  similar endpoints that out-score a given one
  *   x402_trust_bulk        (paid)  score many endpoints in one call
  *   x402_watch_create      (paid)  start a 30-day endpoint watch
  *   x402_watch_events      (free)  poll a watch's append-only event log
@@ -228,6 +229,35 @@ server.registerTool(
     const r = await paidPost({
       url: `${API_BASE}/v1/x402-history`,
       body: { resource, ...(days ? { days } : {}) },
+      ...(PAY_KEY ? { privateKey: PAY_KEY } : {}),
+      maxAmountUsd: MAX_USD,
+      timeoutMs: TIMEOUT_MS,
+      spendTracker,
+    });
+    return asText(decorate(r));
+  },
+);
+
+server.registerTool(
+  "x402_find_alternatives",
+  {
+    title: "Find better-scored alternatives to an x402 endpoint (paid)",
+    description:
+      "Given an x402 endpoint URL, returns the top semantically-similar endpoints (matched on advertised purpose via description embeddings) that currently OUT-SCORE it on the deterministic trust score. Use this to route away from a mediocre/dead/expensive endpoint toward a more reliable, better-settled one serving the SAME function — e.g. before paying, check if a higher-graded equivalent exists. Each alternative carries its trust 'score', 'grade', 'recommendation', cosine 'similarity' (0-1), 'amountUsd' price, and a free 'endpointPage' URL. Same-host siblings and 'avoid'-flagged endpoints are excluded. An empty 'alternatives' array is a valid answer meaning nothing beats the subject. Similarity is independent of latency/geography. Pay-per-call over x402 (~$0.005); auto-pays if a wallet is configured, otherwise returns the price quote.",
+    inputSchema: {
+      resource: z.string().describe("Full x402 resource URL to find better alternatives for, e.g. https://api.example.com/v1/thing"),
+      limit: z.number().int().min(1).max(25).optional().describe("Max alternatives to return (1-25, default 5)"),
+      minScoreDelta: z.number().min(0).optional().describe("Minimum trust-score advantage an alternative must have over the subject (default 5)"),
+    },
+  },
+  async ({ resource, limit, minScoreDelta }) => {
+    const r = await paidPost({
+      url: `${API_BASE}/v1/similar`,
+      body: {
+        resource,
+        ...(limit !== undefined ? { limit } : {}),
+        ...(minScoreDelta !== undefined ? { minScoreDelta } : {}),
+      },
       ...(PAY_KEY ? { privateKey: PAY_KEY } : {}),
       maxAmountUsd: MAX_USD,
       timeoutMs: TIMEOUT_MS,
