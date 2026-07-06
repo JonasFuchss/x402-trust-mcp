@@ -173,7 +173,7 @@ server.registerTool(
   {
     title: "x402 trust leaderboard (free)",
     description:
-      "Free top-25 most trustworthy x402 endpoints, ranked by a deterministic trust score (uptime, envelope compliance, latency, age, on-chain settlement activity, price stability). Use this to discover reliable paid endpoints.",
+      "Free top-25 most trustworthy x402 endpoints, ranked by a deterministic trust score (uptime, envelope compliance, latency, age, on-chain settlement activity, price stability). Latency is measured from a single EU vantage point and includes network distance to the endpoint (so it is only lightly weighted). Use this to discover reliable paid endpoints.",
     inputSchema: {},
   },
   async () => asText(await getJson("/trust/leaderboard")),
@@ -195,7 +195,7 @@ server.registerTool(
   {
     title: "x402 trust score for an endpoint (paid)",
     description:
-      "Trust score (0-100, grade A-F) for a SPECIFIC x402 endpoint, PLUS a machine-readable verdict ('recommendation': proceed|caution|avoid), the advertised price ('advertised.amountUsd'), a confidence-adjusted band ('scoreRange'), and structured flags ('flagsDetailed' with code/severity/message — any severity 'error' means avoid). Includes the full component breakdown and 30-day on-chain stats. One call answers WHETHER and at WHAT PRICE to use an endpoint. Call this BEFORE paying an unknown x402 endpoint to avoid dead, fraudulent, or recently-hijacked services. Pay-per-call over x402; auto-pays if a wallet is configured, otherwise returns the price quote.",
+      "Trust score (0-100, grade A-F) for a SPECIFIC x402 endpoint, PLUS a machine-readable verdict ('recommendation': proceed|caution|avoid), the advertised price ('advertised.amountUsd'), a confidence-adjusted band ('scoreRange'), and structured flags ('flagsDetailed' with code/severity/message — any severity 'error' means avoid). Includes the full component breakdown and 30-day on-chain stats. Note: 'stats.avgLatencyMs' is measured from a single EU vantage point and includes network distance to the endpoint (see 'stats.latencyVantage'), so a geographically distant endpoint reads slower even when its server is fast. One call answers WHETHER and at WHAT PRICE to use an endpoint. Call this BEFORE paying an unknown x402 endpoint to avoid dead, fraudulent, or recently-hijacked services. Pay-per-call over x402; auto-pays if a wallet is configured, otherwise returns the price quote.",
     inputSchema: {
       resource: z.string().describe("Full x402 resource URL to evaluate, e.g. https://api.example.com/v1/thing"),
     },
@@ -218,7 +218,7 @@ server.registerTool(
   {
     title: "x402 endpoint observation history (paid)",
     description:
-      "Raw observation time-series for a SPECIFIC x402 endpoint: listing/delisting/relisting events, advertised price changes, payTo changes, and probe results (uptime, latency, quoted amount) over the requested window (1-90 days). Pay-per-call over x402; auto-pays if a wallet is configured, otherwise returns the price quote.",
+      "Raw observation time-series for a SPECIFIC x402 endpoint: listing/delisting/relisting events, advertised price changes, payTo changes, and probe results (uptime, latency, quoted amount) over the requested window (1-90 days). Per-probe 'latencyMs' is measured from a single EU vantage point and includes network distance to the endpoint. Pay-per-call over x402; auto-pays if a wallet is configured, otherwise returns the price quote.",
     inputSchema: {
       resource: z.string().describe("Full x402 resource URL"),
       days: z.number().int().min(1).max(90).optional().describe("Lookback window in days (default 30)"),
