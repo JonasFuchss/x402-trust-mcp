@@ -24,16 +24,21 @@ payment envelopes. Before your agent sends USDC to an unknown endpoint, ask:
 | `x402_ecosystem_stats` | free | Aggregate state of the x402 ecosystem (listings, reachability, compliance, 30d settlement volume). |
 | `x402_trust_leaderboard` | free | Top-25 most trustworthy x402 endpoints. |
 | `x402_trust_preview` | free | Showcase of what `x402_trust_score` returns — you don't choose the endpoint. Returns the **complete** paid-grade report (exact score, full breakdown, advertised price, on-chain settlement figures, all flags) for **three** endpoints: the best-scored, the median, and the worst-scored. See the full data shape across the quality range before you pay. To score *your own* endpoint, use `x402_trust_score` (paid). Takes no arguments. |
-| `x402_trust_score` | paid | Trust score (0-100, grade A-F) for a specific endpoint, plus a machine-readable pay/don't-pay verdict, the advertised price, a confidence band, and structured flags — everything to decide in one call. |
+| `x402_trust_score` | paid | Trust score (0-100, grade A-F) for a specific endpoint, plus the provider-advertised `serviceName` and `description` (unverified provider claims, shown next to our independent metrics), a machine-readable pay/don't-pay verdict, the advertised price, a confidence band, and structured flags — everything to decide in one call. |
 | `x402_endpoint_history` | paid | Observation time-series for a specific endpoint (listings, price changes, probes). |
+| `x402_find_alternatives` | paid | Find semantically-similar endpoints that OUT-SCORE a given one. Use this to route away from a mediocre/dead/expensive endpoint toward a more reliable, better-settled one serving the same function. Each alternative carries score, grade, similarity (0-1), price, and a free per-endpoint page. |
 | `x402_trust_bulk` | paid | Score up to 500 endpoints in a single paid call from cached full-density snapshots. Picks the cheapest tier that fits your list (10/50/100/200/500). Returns score, grade, recommendation, confidence, and `probed_at` per endpoint. |
 | `x402_watch_create` | paid | Start monitoring one endpoint for 30 days. Alerts on payTo change (takeover signal), price/asset/network change, spec regression, delisting, and liveness. Supports up to 5 webhook + 5 Slack/Discord URLs per watch, all connection-tested before payment. Returns a one-time bearer secret + poll/edit/cancel URLs + `next_steps`. |
-| `x402_watch_events` | free | Poll the append-only event log of an active watch using the watch id and one-time secret. Use `since` (highest previous `event_id`) to page forward; nothing between polls is lost. |
+| `x402_watch_events` | free | Poll the append-only event log of an active watch using the watch id and one-time secret. Use the `since` (endpoint events) and `watch_since` (lifecycle events) cursors to page forward; nothing between polls is lost. |
+| `x402_watch_edit` | free | Change a watch's webhook/Slack URLs, liveness sensitivity, or subscribed events. Bearer-authed with the secret from `x402_watch_create`. |
+| `x402_watch_cancel` | free | Soft-cancel a watch: drops the endpoint back to normal probe cadence immediately, but the event log stays readable via `x402_watch_events` until the original `expires_at`. |
 | `x402_watch_renew` | paid | Extend an active watch by another 30 days. The secret stays the same. |
 
-Paid tools cost a few tenths of a cent to ~$0.50, charged over x402 (USDC on Base). If you
-set `X402_PRIVATE_KEY`, the server **auto-pays** within your `X402_MAX_USD`
-limit; otherwise it returns the price quote for your host to pay.
+Paid tools cost from **$0.005** (a single trust / similar lookup) up to **~$0.50**
+(500-endpoint bulk batch) or **~$0.20** for a 30-day watch, charged over x402
+(USDC on Base). If you set `X402_PRIVATE_KEY`, the server **auto-pays** within
+your `X402_MAX_USD` limit; otherwise it returns the price quote for your host
+to pay.
 
 ### Bulk scoring (`x402_trust_bulk`)
 
@@ -58,37 +63,49 @@ rows / 8 seconds** are recomputed; the response tells you via
 you can see exactly which rows were freshly computed vs served from cache. URLs
 not in the observation set return `found: false`; you still pay for the batch.
 
-### Watch / alerting (`x402_watch_create`, `x402_watch_events`, `x402_watch_renew`)
+### Finding better alternatives (`x402_find_alternatives`)
 
-- **Create** (`x402_watch_create`) buys 30 days of change monitoring for one
-  endpoint. Pay over x402; receive a one-time bearer `secret`, a `poll_url`, a
-  `renew_url`, and machine-readable `next_steps`.
-- **Poll** (`x402_watch_events`) reads the append-only event log. Start without
-  `since`; afterwards pass the highest returned `event_id` as the next `since`.
-  Send `Authorization: Bearer <secret>` — this is done automatically by the tool.
-- **Renew** (`x402_watch_renew`) extends the watch before `expires_at`. The
-  secret stays the same.
+Before paying an unknown endpoint, check whether a better-tested alternative
+exists for the same purpose. `x402_find_alternatives` returns up to 25
+endpoints (default 5) that are **semantically similar** to a given URL — matched
+on advertised purpose via description embeddings — and that **out-score it**
+on our deterministic trust score. Each alternative returns `score`, `grade`,
+`recommendation`, cosine `similarity` (0-1), `amountUsd` price, and a free
+`endpointPage` URL. Same-host siblings and `avoid`-flagged endpoints are
+excluded; an empty `alternatives` array is a valid answer meaning nothing beats
+the subject. Cost is ~$0.005 per call.
+
+### Watch / alerting (`x402_watch_create`, `x402_watch_events`, `x402_watch_edit`, `x402_watch_cancel`, `x402_watch_renew`)
+
+- **Create** (`x402_watch_create`, paid) buys 30 days of change monitoring for
+  one endpoint. Pay over x402; receive a one-time bearer `secret`, a `poll_url`,
+  a `renew_url`, and machine-readable `next_steps`.
+- **Poll** (`x402_watch_events`, free) reads the append-only event log. It
+  returns two streams: `events` (endpoint changes — payTo / price / asset /
+  network / spec / delisting / liveness) and `watch_events` (lifecycle
+  feedback — created / edited / cancelled / renewed / expiring / expired), each
+  with their own cursor (`next_cursor` and `watch_events_cursor`). Page
+  forward by passing the previous response's cursors as `since` /
+  `watch_since`. Cursors/ids are global sequences shared across watches, so a
+  watch's first event id may be >1 — always use the returned `next_cursor`,
+  never assume events start at 1.
+- **Edit** (`x402_watch_edit`, free) changes webhook/Slack URLs, liveness
+  sensitivity, or subscribed events. Bearer-authed with the secret.
+- **Cancel** (`x402_watch_cancel`, free) soft-cancels a watch: no new events
+  accrue and probing drops back to normal cadence immediately, but the event
+  log stays readable via `x402_watch_events` until the original `expires_at`.
+  Cancel is **not** a delete.
+- **Renew** (`x402_watch_renew`, paid) extends the watch before `expires_at`.
+  The secret stays the same.
 
 Optional push delivery to one or more signed HTTPS webhooks and/or Slack/Discord
-incoming webhooks can be configured at creation time (up to 5 of each per watch).
-`webhook_url` and `slack_url` accept a single URL string or an array of URLs.
-Any URL is **connection-tested before you are charged**: the server POSTs a
-signed `connection_test` ping and, if it can't be delivered (3 attempts),
-rejects the watch with `notCharged: true` so you can retry with a corrected URL.
-On success the create response reports per-URL delivery under
+incoming webhooks can be configured at creation time and updated via edit (up to
+5 of each per watch). `webhook_url` and `slack_url` accept a single URL string
+or an array of URLs. Any URL is **connection-tested before you are charged**:
+the server POSTs a signed `connection_test` ping and, if it can't be delivered
+(3 attempts), rejects the change with `notCharged: true` so you can retry with
+a corrected URL. On success the response reports per-URL delivery under
 `delivery.connection_test`.
-
-- `x402_watch_events` polls the append-only log (free). It returns two streams:
-  `events` (endpoint changes) and `watch_events` (lifecycle feedback —
-  created / edited / cancelled / renewed / expiring / expired), each with its own
-  cursor (`next_cursor` / `watch_events_cursor`). Every alert is timestamped
-  (`observed_at_iso`).
-- `x402_watch_edit` changes webhook/Slack URLs, liveness sensitivity, or events
-  for free (bearer-authed). New URLs are connection-tested before the change is
-  persisted; if any new URL fails, the existing config stays unchanged.
-- `x402_watch_cancel` cancels a watch early for free (bearer-authed), returning
-  the endpoint to normal probe cadence immediately.
-- `x402_watch_renew` extends a watch by another 30 days (paid).
 
 If you use a webhook, verify the `x-signature` header equals `sha256=` +
 HMAC-SHA256(body) **keyed by the SHA-256 hex digest of your secret** — i.e. the
@@ -108,6 +125,7 @@ A single call returns everything an agent needs to decide **whether** and at
 | `confidence` / `confidenceDetail` | Overall confidence plus its parts: `observation` (data volume/age) vs `economic` (settlement coverage). |
 | `gradeThresholds` | The score cutoffs for each grade, so the verdict is auditable. |
 | `advertised` | The last observed 402 quote: `{ amount, amountUsd, asset, network, decimals, observedAtTs }`. Trust **and** cost in one call. |
+| `serviceName` / `description` | The provider-advertised name and description (unverified claim from the 402 envelope). Shown next to our independent metrics so you can sanity-check what the provider says against what we've measured. |
 | `flags` / `flagsDetailed` | Legacy string flags plus structured `{ code, severity, message }`. Rule of thumb: **any flag with `severity: "error"` ⇒ avoid.** |
 | `breakdown` / `subscores` | The full deterministic math (uptime, compliance, latency, age, activity, stability → technical / spec / economic subscores). |
 | `stats` | Observed evidence: probe counts, latency, payTo, `settledVolumeUsd30d`, distinct payers, and a `payToChanged*` hijack signal when the receiving wallet changed recently. |
