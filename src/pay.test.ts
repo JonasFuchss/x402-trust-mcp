@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { parse402, signPayment, validateAccept, SpendTracker, type Accept } from "./pay.js";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { parse402, signPayment, validateAccept, paidPost, SpendTracker, type Accept } from "./pay.js";
 
 const ACCEPT_BODY = {
   x402Version: 2,
@@ -228,5 +228,72 @@ describe("SpendTracker", () => {
     const t = new SpendTracker(0, 0);
     for (let i = 0; i < 100; i++) t.record(1000);
     expect(t.check(1_000_000)).toBeNull();
+  });
+});
+
+describe("SpendTracker reserve/release (anti-drain)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" as `0x${string}`;
+
+  function stubFetchSequence(paidStatus: number): void {
+    let call = 0;
+    vi.stubGlobal("fetch", async () => {
+      call++;
+      if (call === 1) {
+        return new Response(JSON.stringify(ACCEPT_BODY), {
+          status: 402,
+          headers: { "content-type": "application/json", "payment-required": b64(ACCEPT_BODY) },
+        });
+      }
+      return new Response(JSON.stringify(paidStatus === 200 ? { ok: true } : { error: "boom" }), {
+        status: paidStatus,
+        headers: { "content-type": "application/json" },
+      });
+    });
+  }
+
+  it("keeps the spend counted when the paid call returns 5xx (settle-then-crash)", async () => {
+    stubFetchSequence(500);
+    const tracker = new SpendTracker(1, 10);
+    const r = await paidPost({
+      url: "https://api.example.com/v1/x",
+      body: {},
+      privateKey: KEY,
+      maxAmountUsd: 1,
+      timeoutMs: 5000,
+      spendTracker: tracker,
+    });
+    expect(r.paid).toBe(false);
+    expect(r.status).toBe(500);
+    // The payment was submitted — the spend MUST count even though the server
+    // never returned 2xx (settlement happens before the response is written).
+    expect(tracker.totalSpentUsd).toBeCloseTo(0.005);
+  });
+
+  it("releases the reservation when the paid call is explicitly rejected with 402", async () => {
+    stubFetchSequence(402);
+    const tracker = new SpendTracker(1, 10);
+    await paidPost({
+      url: "https://api.example.com/v1/x",
+      body: {},
+      privateKey: KEY,
+      maxAmountUsd: 1,
+      timeoutMs: 5000,
+      spendTracker: tracker,
+    });
+    expect(tracker.totalSpentUsd).toBe(0);
+  });
+
+  it("check+reserve is atomic for concurrent calls (no overshoot)", async () => {
+    const t = new SpendTracker(0.05, 0);
+    expect(t.check(0.05)).toBeNull();
+    t.reserve(0.05);
+    // A second concurrent call must now see the cap as spent.
+    expect(t.check(0.01)).toMatch(/cumulative spend cap/);
+    t.release(0.05);
+    expect(t.check(0.05)).toBeNull();
   });
 });

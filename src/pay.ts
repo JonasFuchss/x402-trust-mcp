@@ -247,6 +247,14 @@ export interface PaidCallResult {
  * Process-lifetime spend tracker. A per-call ceiling alone can't stop an agent
  * (or a compromised server) from draining a funded wallet $0.05 at a time over
  * unlimited calls, so we also enforce a cumulative cap and a call-count cap.
+ *
+ * Usage: check() + reserve() together BEFORE signing (synchronous pair, so no
+ * concurrent call can slip between them), then release() ONLY if the server
+ * explicitly rejected the payment (a 402 on the paid request). Any other
+ * outcome — success, 5xx, network failure — keeps the reservation, because
+ * x402 settles on-chain BEFORE the server writes its response: a crashed or
+ * hostile server can take the money and never return 2xx. Recording spend
+ * only on 2xx made the caps a per-call limit with unlimited retries.
  */
 export class SpendTracker {
   private spentUsd = 0;
@@ -267,9 +275,19 @@ export class SpendTracker {
     }
     return null;
   }
-  record(amountUsd: number): void {
+  /** Tentatively count a spend. Must immediately follow check() (no await between). */
+  reserve(amountUsd: number): void {
     this.spentUsd += amountUsd;
     this.calls += 1;
+  }
+  /** Undo a reservation — only when the payment was provably NOT consumed (402). */
+  release(amountUsd: number): void {
+    this.spentUsd = Math.max(0, this.spentUsd - amountUsd);
+    this.calls = Math.max(0, this.calls - 1);
+  }
+  /** Backwards-compatible alias of reserve(). */
+  record(amountUsd: number): void {
+    this.reserve(amountUsd);
   }
   get totalSpentUsd(): number {
     return this.spentUsd;
@@ -333,12 +351,15 @@ export async function paidPost(opts: {
     return { paid: false, status: 402, data: { error: `unsafe payment quote: ${guardReason}` }, quote };
   }
 
-  // Enforce the process-lifetime cumulative + call-count caps.
+  // Enforce the process-lifetime cumulative + call-count caps. check+reserve is
+  // a synchronous pair — no await between them, so concurrent paid calls can't
+  // both pass the check before either records (race → overshoot).
   if (opts.spendTracker) {
     const capReason = opts.spendTracker.check(amountUsd);
     if (capReason) {
       return { paid: false, status: 402, data: { error: capReason }, quote };
     }
+    opts.spendTracker.reserve(amountUsd);
   }
 
   const xPayment = await signPayment(opts.privateKey, accept);
@@ -352,8 +373,10 @@ export async function paidPost(opts: {
       /* ignore */
     }
   }
-  // Count the spend only once the server actually accepted the payment.
-  if (second.ok && opts.spendTracker) opts.spendTracker.record(amountUsd);
+  // The reservation stays unless the server EXPLICITLY rejected the payment
+  // (402 on the paid request = not consumed). A 5xx/transport failure after a
+  // submitted payment still counts: settlement happens before the response.
+  if (second.status === 402 && opts.spendTracker) opts.spendTracker.release(amountUsd);
 
   return {
     paid: second.ok,
