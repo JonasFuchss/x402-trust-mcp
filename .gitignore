@@ -3,3 +3,6 @@ dist/
 *.log
 .DS_Store
 *.tgz
+
+# GitHub PAT for release automation (90-day fine-grained token, see GH_TOKEN.txt)
+GH_TOKEN.txt
