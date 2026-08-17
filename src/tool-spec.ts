@@ -21,7 +21,7 @@ import { z } from "zod";
 
 /** Server identity reported in the MCP handshake (both transports). */
 export const MCP_SERVER_NAME = "x402-trust";
-export const MCP_VERSION = "1.8.0";
+export const MCP_VERSION = "1.9.0";
 /** User-Agent the npm (stdio) build sends to the public API. */
 export const MCP_USER_AGENT = `x402-trust-mcp/${MCP_VERSION}`;
 
