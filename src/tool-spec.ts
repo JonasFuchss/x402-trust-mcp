@@ -21,7 +21,7 @@ import { z } from "zod";
 
 /** Server identity reported in the MCP handshake (both transports). */
 export const MCP_SERVER_NAME = "x402-trust";
-export const MCP_VERSION = "1.10.0";
+export const MCP_VERSION = "1.10.1";
 /** User-Agent the npm (stdio) build sends to the public API. */
 export const MCP_USER_AGENT = `x402-trust-mcp/${MCP_VERSION}`;
 
@@ -224,7 +224,7 @@ export const TRUST_TOOL_SPECS: readonly TrustToolSpec[] = [
     name: "x402_semantic_search",
     title: "Semantic search over the x402 catalog (paid)",
     description:
-      "Free-text SEMANTIC SEARCH across the entire monitored x402 endpoint catalog. Given a plain-language query (e.g. \"weather forecast\", \"image generation\", \"EVM gas price oracle\"), returns the up to 25 endpoints whose advertised purpose is semantically closest, ranked by cosine similarity over description embeddings blended with trust score; endpoints carrying a real description outrank host/path-only ones on near ties. Use this for DISCOVERY: find candidate endpoints for a capability before checking any of them in depth. Each match carries 'id', 'resource' URL, trust 'score', 'grade', cosine 'similarity' (0-1), 'description' when advertised, and a free 'endpointPage' URL. 'score'/'grade' are null for endpoints not yet scored. Deliberately NO verdict/recommendation or flag detail: the per-endpoint trust report (x402_trust_score) carries those. Pay-per-call over x402 (~$0.001); auto-pays if a wallet is configured, otherwise returns the price quote.",
+      "Free-text SEMANTIC SEARCH across the entire monitored x402 endpoint catalog. Given a plain-language query (e.g. \"weather forecast\", \"image generation\", \"EVM gas price oracle\"), returns the up to 25 endpoints whose advertised purpose is semantically closest, ranked by cosine similarity with trust score as a tiebreaker. Endpoints that advertise no description are still matched: their URL path tokens are embedded instead, a weaker signal, so they surface but rank below described endpoints. Use this for DISCOVERY: find candidate endpoints for a capability before checking any of them in depth. Each match carries 'id', 'resource' URL, trust 'score', 'grade', cosine 'similarity' (0-1), 'description' when advertised, and a free 'endpointPage' URL. 'score'/'grade' are null for endpoints not yet scored. Deliberately NO verdict/recommendation or flag detail: the per-endpoint trust report (x402_trust_score) carries those. Pay-per-call over x402 (~$0.001); auto-pays if a wallet is configured, otherwise returns the price quote.",
     inputSchema: {
       query: z.string().min(2).max(500).describe("Free-text search query, e.g. \"weather forecast\". Describe the capability you need in plain words; matching is by meaning, not substrings."),
       limit: z.number().int().min(1).max(25).optional().describe("Max matches to return (1-25, default 25)"),
