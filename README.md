@@ -248,9 +248,22 @@ To verify a result:
    order, no whitespace, ECMAScript number formatting.
 3. SHA-256 the canonical UTF-8 bytes; the hex must equal `signature.digest`.
 4. Verify `signature.value` (base64url, no padding) against the public key
-   that `signature.keyId` resolves to in the key document at
-   `signature.publicKeys`
-   (https://x402.fuchss.app/.well-known/x402-trust-keys.json).
+   that `signature.keyId` resolves to in your PINNED copy of the key document
+   (see below).
+
+**Trust anchor: pin, do not follow.** `signature.publicKeys` is a discovery
+hint, never a trust source. A verifier that fetches the key URL from the
+response it is checking verifies against a key chosen by the sender, which
+proves nothing: a forged response would carry the attacker's own key URL and
+still verify. Pin one of these in your client instead:
+
+- the public key itself (strongest, works offline; add new keys on rotation),
+  e.g. `{ "x402trust-2026-08": "i4jrHKvmZ98-IGgseDfMTjMV4lAaLAgk-EnBeRIJQ5Y" }`
+  (current at the time of writing; the key document always carries the full
+  list, retired keys included), or
+- the key document URL
+  `https://x402.fuchss.app/.well-known/x402-trust-keys.json`, fetched over
+  HTTPS once at bootstrap and cached (rotation-friendly).
 
 Retired keys stay published forever, so a response you froze as evidence
 remains verifiable. A worked test vector and a 20-line reference verifier
