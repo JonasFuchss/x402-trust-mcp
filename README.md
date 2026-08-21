@@ -234,6 +234,31 @@ payment authorizations locally.
 - Cumulative spend cap (`X402_MAX_TOTAL_USD`)
 - Call-count cap (`X402_MAX_CALLS`)
 
+## Verifying response signatures
+
+Tool results are provider-signed: the `result` object of signed tools carries
+a top-level `signature` block with an Ed25519 signature over the
+JCS-canonicalized (RFC 8785) response without the `signature` field. This
+proves the content was assembled by x402-trust and not modified afterwards.
+
+To verify a result:
+
+1. Take the `result` object and remove its `signature` field.
+2. Canonicalize with JCS (RFC 8785): object keys sorted by UTF-16 code unit
+   order, no whitespace, ECMAScript number formatting.
+3. SHA-256 the canonical UTF-8 bytes; the hex must equal `signature.digest`.
+4. Verify `signature.value` (base64url, no padding) against the public key
+   that `signature.keyId` resolves to in the key document at
+   `signature.publicKeys`
+   (https://x402.fuchss.app/.well-known/x402-trust-keys.json).
+
+Retired keys stay published forever, so a response you froze as evidence
+remains verifiable. A worked test vector and a 20-line reference verifier
+live at https://x402.fuchss.app/schemas. Watch management responses
+(`x402_watch_create`, `x402_watch_edit`, `x402_watch_cancel`,
+`x402_watch_renew`) are unsigned by design: they carry capability secrets
+that must never be forwarded as evidence.
+
 ## License
 
 MIT
