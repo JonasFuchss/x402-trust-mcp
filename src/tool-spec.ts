@@ -135,7 +135,7 @@ function deliveryBlock(args: ToolArgs): Record<string, unknown> | undefined {
 }
 
 // ---------------------------------------------------------------------------
-// The tool surface (12 tools: 6 free, 6 paid)
+// The tool surface (13 tools: 6 free, 7 paid)
 // ---------------------------------------------------------------------------
 
 export const TRUST_TOOL_SPECS: readonly TrustToolSpec[] = [
