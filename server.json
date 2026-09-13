@@ -2,8 +2,8 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.JonasFuchss/x402-trust-mcp",
   "description": "Trust & reliability data for x402 endpoints before your agent pays them.",
-      "version": "1.11.5",
-  "websiteUrl": "https://x402.fuchss.app",
+      "version": "1.12.0",
+  "websiteUrl": "https://x402-trust.com",
   "repository": {
     "url": "https://github.com/JonasFuchss/x402-trust-mcp",
     "source": "github"
@@ -13,7 +13,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "x402-trust-mcp",
-  "version": "1.11.5",
+  "version": "1.12.0",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"
@@ -47,7 +47,7 @@
           "name": "X402_TRUST_API_BASE",
           "description": "API base URL.",
           "isRequired": false,
-          "default": "https://x402.fuchss.app"
+          "default": "https://x402-trust.com"
         },
         {
           "name": "X402_TIMEOUT_MS",

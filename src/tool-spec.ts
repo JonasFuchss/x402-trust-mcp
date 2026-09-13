@@ -4,9 +4,9 @@
  *
  *   1. the npm package (`x402-trust-mcp`, stdio, runs on the user's machine,
  *      pays the public API over x402 with the user's key), and
- *   2. the hosted Streamable-HTTP endpoint `POST /mcp` on x402.fuchss.app
+ *   2. the hosted Streamable-HTTP endpoint `POST /mcp` on x402-trust.com
  *      (zero-install; free tools open, paid tools settle via a forwarded
- *      PAYMENT-SIGNATURE header — see packages/reseller/src/mcp-hosted.ts).
+ *      PAYMENT-SIGNATURE header).
  *
  * Both register their tools from TRUST_TOOL_SPECS and build the SAME backend
  * HTTP call from tool args via buildBackendRequest(), so the two surfaces
@@ -21,7 +21,7 @@ import { z } from "zod";
 
 /** Server identity reported in the MCP handshake (both transports). */
 export const MCP_SERVER_NAME = "x402-trust";
-export const MCP_VERSION = "1.11.5";
+export const MCP_VERSION = "1.12.0";
 /** User-Agent the npm (stdio) build sends to the public API. */
 export const MCP_USER_AGENT = `x402-trust-mcp/${MCP_VERSION}`;
 
@@ -32,7 +32,7 @@ export type ToolMethod = "GET" | "POST" | "PATCH" | "DELETE";
 
 /** One concrete HTTP call against the public x402-trust API, derived from a
  * tool call. Both executors turn this into an actual fetch: the npm package
- * targets https://x402.fuchss.app (paidPost with the user's key), the hosted
+ * targets https://x402-trust.com (paidPost with the user's key), the hosted
  * endpoint targets the reseller's own loopback and forwards the caller's
  * payment header verbatim. */
 export interface BackendCall {

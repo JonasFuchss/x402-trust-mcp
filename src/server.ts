@@ -11,7 +11,7 @@
  * The tool surface (names, titles, descriptions, input schemas and the mapping
  * from tool args to backend HTTP calls) is SINGLE-SOURCED in ./tool-spec.ts and
  * shared with the hosted Streamable-HTTP endpoint (POST /mcp on
- * x402.fuchss.app, see packages/reseller/src/mcp-hosted.ts) so the two
+ * x402-trust.com, hosted alongside the public API) so the two
  * distributions cannot drift apart. This file only adds the stdio transport
  * and the client-side payment flow.
  *
@@ -25,7 +25,7 @@
  * Without a key they return the quote so the host can pay.
  *
  * Config via env:
- *   X402_TRUST_API_BASE   default https://x402.fuchss.app
+ *   X402_TRUST_API_BASE   default https://x402-trust.com
  *   X402_PRIVATE_KEY      optional 0x… Base wallet key to enable auto-pay
  *   X402_MAX_USD          default 0.05 — auto-pay ceiling PER CALL (0 disables)
  *   X402_MAX_TOTAL_USD    default 1.00 — cumulative auto-pay cap per process (0 = unlimited)
@@ -55,7 +55,7 @@ import {
 // re-export so existing imports of "./server.js" keep working.
 export { pickBulkTier } from "./tool-spec.js";
 
-const API_BASE = (process.env.X402_TRUST_API_BASE ?? "https://x402.fuchss.app").replace(/\/$/, "");
+const API_BASE = (process.env.X402_TRUST_API_BASE ?? "https://x402-trust.com").replace(/\/$/, "");
 const PRIVATE_KEY = (() => {
   const raw = process.env.X402_PRIVATE_KEY;
   if (raw === undefined || raw.trim() === "") return undefined;

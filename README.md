@@ -5,7 +5,7 @@
 An [MCP](https://modelcontextprotocol.io) server that lets your agent check the
 **trust & reliability of x402 endpoints before paying them**.
 
-Backed by [x402.fuchss.app](https://x402.fuchss.app), which monitors the entire
+Backed by [x402-trust.com](https://x402-trust.com), which monitors the entire
 x402 ecosystem on Base 24/7: uptime probes, 402-envelope spec compliance,
 advertised-price history, and **real on-chain USDC settlement volume** per
 endpoint.
@@ -211,7 +211,7 @@ To enable autonomous payment for the paid tools, add a funded Base USDC wallet:
 
 | Var | Default | Description |
 |---|---|---|
-| `X402_TRUST_API_BASE` | `https://x402.fuchss.app` | API base URL. |
+| `X402_TRUST_API_BASE` | `https://x402-trust.com` | API base URL. |
 | `X402_PRIVATE_KEY` | _(unset)_ | Base wallet private key. Enables auto-pay for paid tools. Accepted with or without the `0x` prefix (surrounding whitespace is trimmed); a set-but-malformed key logs a warning and leaves auto-pay off rather than failing silently. |
 | `X402_MAX_USD` | `0.05` | Per-call auto-pay ceiling. 0 disables auto-pay. |
 | `X402_MAX_TOTAL_USD` | `1.00` | Cumulative auto-pay cap per process. 0 = unlimited. |
@@ -262,12 +262,12 @@ still verify. Pin one of these in your client instead:
   (current at the time of writing; the key document always carries the full
   list, retired keys included), or
 - the key document URL
-  `https://x402.fuchss.app/.well-known/x402-trust-keys.json`, fetched over
+  `https://x402-trust.com/.well-known/x402-trust-keys.json`, fetched over
   HTTPS once at bootstrap and cached (rotation-friendly).
 
 Retired keys stay published forever, so a response you froze as evidence
 remains verifiable. A worked test vector and a 20-line reference verifier
-live at https://x402.fuchss.app/schemas. Watch management responses
+live at https://x402-trust.com/schemas. Watch management responses
 (`x402_watch_create`, `x402_watch_edit`, `x402_watch_cancel`,
 `x402_watch_renew`) are unsigned by design: they carry capability secrets
 that must never be forwarded as evidence.
