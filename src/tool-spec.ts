@@ -21,7 +21,7 @@ import { z } from "zod";
 
 /** Server identity reported in the MCP handshake (both transports). */
 export const MCP_SERVER_NAME = "x402-trust";
-export const MCP_VERSION = "1.13.0";
+export const MCP_VERSION = "1.13.1";
 /** User-Agent the npm (stdio) build sends to the public API. */
 export const MCP_USER_AGENT = `x402-trust-mcp/${MCP_VERSION}`;
 
@@ -151,7 +151,7 @@ export const TRUST_TOOL_SPECS: readonly TrustToolSpec[] = [
     name: "x402_trust_leaderboard",
     title: "x402 trust leaderboard (free)",
     description:
-      "Free top-25 most trustworthy x402 endpoints, ranked by a deterministic trust score (uptime, envelope compliance, latency, age, on-chain settlement activity, price stability). Latency is measured from a single EU vantage point and includes network distance to the endpoint (so it is only lightly weighted). Use this to discover reliable paid endpoints.",
+      "Free top-25 most trustworthy x402 hosts (providers), ranked by a deterministic trust score. Each host's score is the probe-weighted mean of its listed endpoints' scores, so providers are judged by their whole measured surface instead of one provider flooding the board with path variants. The per-endpoint score blends uptime, envelope compliance, latency, age, on-chain settlement activity and price stability. Latency is measured from a single EU vantage point and includes network distance to the endpoint (so it is only lightly weighted). Use this to discover reliable paid endpoints.",
     inputSchema: {},
     backend: { paid: false, method: "GET", build: () => ({ path: "/trust/leaderboard" }) },
   },
