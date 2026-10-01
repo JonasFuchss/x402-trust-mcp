@@ -21,7 +21,7 @@ import { z } from "zod";
 
 /** Server identity reported in the MCP handshake (both transports). */
 export const MCP_SERVER_NAME = "x402-trust";
-export const MCP_VERSION = "1.13.1";
+export const MCP_VERSION = "1.14.0";
 /** User-Agent the npm (stdio) build sends to the public API. */
 export const MCP_USER_AGENT = `x402-trust-mcp/${MCP_VERSION}`;
 
@@ -135,7 +135,7 @@ function deliveryBlock(args: ToolArgs): Record<string, unknown> | undefined {
 }
 
 // ---------------------------------------------------------------------------
-// The tool surface (13 tools: 6 free, 7 paid)
+// The tool surface (15 tools: 8 free, 7 paid)
 // ---------------------------------------------------------------------------
 
 export const TRUST_TOOL_SPECS: readonly TrustToolSpec[] = [
@@ -151,9 +151,68 @@ export const TRUST_TOOL_SPECS: readonly TrustToolSpec[] = [
     name: "x402_trust_leaderboard",
     title: "x402 trust leaderboard (free)",
     description:
-      "Free top-25 most trustworthy x402 hosts (providers), ranked by a deterministic trust score. Each host's score is the probe-weighted mean of its listed endpoints' scores, so providers are judged by their whole measured surface instead of one provider flooding the board with path variants. The per-endpoint score blends uptime, envelope compliance, latency, age, on-chain settlement activity and price stability. Latency is measured from a single EU vantage point and includes network distance to the endpoint (so it is only lightly weighted). Use this to discover reliable paid endpoints.",
-    inputSchema: {},
-    backend: { paid: false, method: "GET", build: () => ({ path: "/trust/leaderboard" }) },
+      "Free leaderboard of the most trustworthy x402 hosts (providers), ranked by a deterministic trust score. Each host's score is the probe-weighted mean of its listed endpoints' scores, so providers are judged by their whole measured surface instead of one provider flooding the board with path variants. The per-endpoint score blends uptime, envelope compliance, latency, age, on-chain settlement activity and price stability. Latency is measured from a single EU vantage point and includes network distance to the endpoint (so it is only lightly weighted). The board is a materialized top-100; one call returns one page of at most 25 hosts plus 'total' (ranked hosts on the board), so page with 'offset' instead of pulling the whole board into context at once. Rows carry 'providerVerified' + 'providerName' when the host completed provider verification (informational, never a ranking input). Use this to discover reliable paid endpoints, then x402_search to list a chosen host's endpoints.",
+    inputSchema: {
+      limit: z.number().int().min(1).max(25).optional().describe("Page size (1-25, default 25)"),
+      offset: z.number().int().min(0).optional().describe("Skip this many ranked hosts for the next page (default 0). The board holds at most 100 hosts."),
+    },
+    backend: {
+      paid: false,
+      method: "GET",
+      build: (args) => {
+        const params: Record<string, string> = {};
+        const limit = numArg(args, "limit");
+        if (limit !== undefined) params.limit = String(limit);
+        const offset = numArg(args, "offset");
+        if (offset !== undefined) params.offset = String(offset);
+        return { path: "/trust/leaderboard", ...(Object.keys(params).length > 0 ? { params } : {}) };
+      },
+    },
+  },
+  {
+    name: "x402_verified_providers",
+    title: "x402 verified providers (free)",
+    description:
+      "Free list of PROVIDER-VERIFIED x402 hosts: providers who proved control of their domain (key file at /.well-known/x402-trust.txt) AND confirmed their contact email. Each row carries the host, its leaderboard-style probe-weighted trust 'score'/'grade' (null/'?' while too few probes exist; verification itself never changes the score), listed-endpoint and probe counts, and the provider's own published profile: 'orgName', 'supportUrl', 'docsUrl', 'address', 'description' and the confirmed 'contactEmail' (null until email-confirmed). One call returns one page of at most 25 providers plus 'total'; page with 'offset'. Use this to find accountable providers with real contact channels, then x402_search with the host as query to list that provider's endpoints.",
+    inputSchema: {
+      limit: z.number().int().min(1).max(25).optional().describe("Page size (1-25, default 25)"),
+      offset: z.number().int().min(0).optional().describe("Skip this many providers for the next page (default 0)"),
+    },
+    backend: {
+      paid: false,
+      method: "GET",
+      build: (args) => {
+        const params: Record<string, string> = {};
+        const limit = numArg(args, "limit");
+        if (limit !== undefined) params.limit = String(limit);
+        const offset = numArg(args, "offset");
+        if (offset !== undefined) params.offset = String(offset);
+        return { path: "/verified.json", ...(Object.keys(params).length > 0 ? { params } : {}) };
+      },
+    },
+  },
+  {
+    name: "x402_search",
+    title: "Keyword search over the x402 catalog (free)",
+    description:
+      "Free KEYWORD search across the entire monitored x402 endpoint catalog (listed AND delisted endpoints). The query is matched as a case-insensitive substring against host, resource URL and service name: use it for 'list every endpoint of nsgoods.org', 'is api.example.com cataloged?', or path lookups like '/v1/weather' - exact substring questions the semantic search (which matches by MEANING, paid) deliberately does not answer. One call returns one page of at most 25 matches plus 'total' (the unpaged match count); page with 'offset'. Each match carries 'id', 'resource' URL, 'host', 'serviceName', 'description', 'delisted' (true = removed from discovery sources but still answering probes, page and badge stay live), cached trust 'score'/'grade' (null while unscored, up to 24h old), 'providerVerified' + 'providerName' (host completed provider verification; informational, never a ranking input), and a free 'endpointPage' URL. Deliberately NO verdict/flag detail: the per-endpoint verdict is x402_trust_score (paid); by-meaning discovery is x402_semantic_search (paid).",
+    inputSchema: {
+      query: z.string().min(1).max(100).describe("Substring matched against host, resource URL and service name, e.g. a domain like 'nsgoods.org' or a path like '/v1/weather'. Matching is literal, not by meaning."),
+      limit: z.number().int().min(1).max(25).optional().describe("Page size (1-25, default 25)"),
+      offset: z.number().int().min(0).optional().describe("Skip this many matches for the next page (default 0)"),
+    },
+    backend: {
+      paid: false,
+      method: "GET",
+      build: (args) => {
+        const params: Record<string, string> = { q: strArg(args, "query") };
+        const limit = numArg(args, "limit");
+        if (limit !== undefined) params.limit = String(limit);
+        const offset = numArg(args, "offset");
+        if (offset !== undefined) params.offset = String(offset);
+        return { path: "/trust/search", params };
+      },
+    },
   },
   {
     name: "x402_trust_preview",
@@ -224,7 +283,7 @@ export const TRUST_TOOL_SPECS: readonly TrustToolSpec[] = [
     name: "x402_semantic_search",
     title: "Semantic search over the x402 catalog (paid)",
     description:
-      "Free-text SEMANTIC SEARCH across the entire monitored x402 endpoint catalog. Given a plain-language query (e.g. \"weather forecast\", \"image generation\", \"EVM gas price oracle\"), returns the up to 25 endpoints whose advertised purpose is semantically closest. Ranking is deterministic and fully specified: cosine similarity bucketed to whole percentage points first (80.3% and 80.5% are the same bucket, so sub-percent noise never outranks a better endpoint), then trust score (0-100), then described-before-undescribed, then endpoint id as a stable final tiebreak. Matches below a 0.5 cosine-similarity floor are dropped entirely, so a query can return fewer than the requested limit (or none). Endpoints that advertise no description are still matched: they are embedded from their service name and URL path tokens instead of a written description (host name as a last resort). The EXACT effect of a missing description: no fixed point deduction, and no direct similarity malus either; the only deterministic penalty is the described-before-undescribed tiebreak (at equal similarity bucket AND equal trust score, a described endpoint ranks first). Beyond that the effect is purely indirect: the shorter fallback text typically yields lower cosine similarity than a prose description, so undescribed endpoints tend to land in lower similarity buckets, by a query-dependent (never fixed) amount. Use this for DISCOVERY: find candidate endpoints for a capability before checking any of them in depth. Each match carries 'id', 'resource' URL, trust 'score' (0-100), 'grade' (A-F), raw cosine 'similarity' (0-1; ranking buckets it to whole percents), 'amountUsd' price (null when not advertised), 'priceCeiling' (true when amountUsd is an x402 'upto' authorization ceiling, not a fixed per-call price), 'description' when advertised, and a free 'endpointPage' URL. 'score'/'grade' are null for endpoints not yet scored. Deliberately NO verdict/recommendation or flag detail: the per-endpoint trust report (x402_trust_score) carries those. Pay-per-call over x402 (~$0.001); auto-pays if a wallet is configured, otherwise returns the price quote.",
+      "Free-text SEMANTIC SEARCH across the entire monitored x402 endpoint catalog. Given a plain-language query (e.g. \"weather forecast\", \"image generation\", \"EVM gas price oracle\"), returns the up to 25 endpoints whose advertised purpose is semantically closest. Ranking is deterministic and fully specified: cosine similarity bucketed to whole percentage points first (80.3% and 80.5% are the same bucket, so sub-percent noise never outranks a better endpoint), then trust score (0-100), then described-before-undescribed, then endpoint id as a stable final tiebreak. Matches below a 0.5 cosine-similarity floor are dropped entirely, so a query can return fewer than the requested limit (or none). Endpoints that advertise no description are still matched: they are embedded from their service name and URL path tokens instead of a written description (host name as a last resort). The EXACT effect of a missing description: no fixed point deduction, and no direct similarity malus either; the only deterministic penalty is the described-before-undescribed tiebreak (at equal similarity bucket AND equal trust score, a described endpoint ranks first). Beyond that the effect is purely indirect: the shorter fallback text typically yields lower cosine similarity than a prose description, so undescribed endpoints tend to land in lower similarity buckets, by a query-dependent (never fixed) amount. Use this for DISCOVERY: find candidate endpoints for a capability before checking any of them in depth. Each match carries 'id', 'resource' URL, trust 'score' (0-100), 'grade' (A-F), raw cosine 'similarity' (0-1; ranking buckets it to whole percents), 'amountUsd' price (null when not advertised), 'priceCeiling' (true when amountUsd is an x402 'upto' authorization ceiling, not a fixed per-call price), 'providerVerified' + 'providerName' (host completed provider verification; informational, never a ranking input), 'description' when advertised, and a free 'endpointPage' URL. 'score'/'grade' are null for endpoints not yet scored. Deliberately NO verdict/recommendation or flag detail: the per-endpoint trust report (x402_trust_score) carries those. Pay-per-call over x402 (~$0.001); auto-pays if a wallet is configured, otherwise returns the price quote.",
     inputSchema: {
       query: z.string().min(2).max(500).describe("Free-text search query, e.g. \"weather forecast\". Describe the capability you need in plain words; matching is by meaning, not substrings."),
       limit: z.number().int().min(1).max(25).optional().describe("Max matches to return (1-25, default 25)"),

@@ -15,10 +15,11 @@
  * distributions cannot drift apart. This file only adds the stdio transport
  * and the client-side payment flow.
  *
- * Tools (12): free — x402_ecosystem_stats, x402_trust_leaderboard,
- * x402_trust_preview, x402_watch_events, x402_watch_edit, x402_watch_cancel;
+ * Tools (15): free — x402_ecosystem_stats, x402_trust_leaderboard,
+ * x402_trust_preview, x402_verified_providers, x402_search,
+ * x402_watch_events, x402_watch_edit, x402_watch_cancel;
  * paid — x402_trust_score, x402_endpoint_history, x402_find_alternatives,
- * x402_trust_bulk, x402_watch_create, x402_watch_renew.
+ * x402_semantic_search, x402_trust_bulk, x402_watch_create, x402_watch_renew.
  *
  * Paid tools quote the price and, if X402_PRIVATE_KEY is set (a funded Base
  * USDC wallet) and the quote is within X402_MAX_USD, auto-pay over x402.
