@@ -25,11 +25,12 @@ payment envelopes. Before your agent sends USDC to an unknown endpoint, ask:
 | `x402_trust_leaderboard` | free | Most trustworthy x402 hosts (providers); each host score is the probe-weighted mean of its listed endpoints. Paged: one call returns at most 25 hosts plus `total`; the board holds the top 100, page with `offset`. |
 | `x402_verified_providers` | free | Provider-verified x402 hosts (domain key file + confirmed contact email) with their published profile: org name, support/docs links, description, confirmed contact address, plus leaderboard-style host score. Paged like the leaderboard (max 25 per call, `offset`). |
 | `x402_search` | free | Keyword search across the whole catalog (listed AND delisted): the query matches as a substring against host, resource URL and service name, the lookup for "every endpoint of this domain" that the semantic search (by meaning) does not answer. Paged (max 25 per call, `offset`, `total` = unpaged matches). |
+| `x402_semantic_search` | free | Free-text semantic search across the whole monitored catalog. Describe the capability you need in plain words, get the up to 25 closest endpoints ranked deterministically: cosine similarity bucketed to whole percentage points first (80.3% and 80.5% tie), then trust score, then described-before-undescribed, then id; matches below a 0.5 similarity floor are dropped. Missing description: no fixed malus, only the tiebreak loss at equal bucket + score (fallback embedding via service name + URL path tokens usually lowers similarity). Each match has resource, score, grade, similarity, description, and a free per-endpoint page. Discovery only: no verdicts or flag details (that is `x402_trust_score`). Free since 2026-10-05, per-IP rate limited. |
 | `x402_trust_preview` | free | Showcase of what `x402_trust_score` returns — you don't choose the endpoint. Returns the **complete** paid-grade report (exact score, full breakdown, advertised price, on-chain settlement figures, all flags) for **three** endpoints: the best-scored, the median, and the worst-scored. See the full data shape across the quality range before you pay. To score *your own* endpoint, use `x402_trust_score` (paid). Takes no arguments. |
 | `x402_trust_score` | paid | Trust score (0-100, grade A-F) for a specific endpoint, plus the provider-advertised `serviceName` and `description` (unverified provider claims, shown next to our independent metrics), the discovery `sources` provenance, provider verification fields (`providerVerified`, `providerName`, `providerContact`), a machine-readable pay/don't-pay verdict, the advertised price, a confidence band, and structured flags — everything to decide in one call. The call also refreshes the endpoint's free public snapshot (page, badge, card) immediately. |
 | `x402_endpoint_history` | paid | Observation time-series for a specific endpoint (listings, price changes, probes). |
 | `x402_find_alternatives` | paid | Find semantically-similar endpoints that OUT-SCORE a given one. Use this to route away from a mediocre/dead/expensive endpoint toward a more reliable, better-settled one serving the same function. Each alternative carries score, grade, similarity (0-1), price, and a free per-endpoint page. |
-| `x402_semantic_search` | paid | Free-text semantic search across the whole monitored catalog. Describe the capability you need in plain words, get the up to 25 closest endpoints ranked deterministically: cosine similarity bucketed to whole percentage points first (80.3% and 80.5% tie), then trust score, then described-before-undescribed, then id; matches below a 0.5 similarity floor are dropped. Missing description: no fixed malus, only the tiebreak loss at equal bucket + score (fallback embedding via service name + URL path tokens usually lowers similarity). Each match has resource, score, grade, similarity, description, and a free per-endpoint page. Discovery only: no verdicts or flag details (that is `x402_trust_score`). |
+
 | `x402_trust_bulk` | paid | Score up to 500 endpoints in a single paid call from cached full-density snapshots. Picks the cheapest tier that fits your list (10/50/100/200/500). Returns score, grade, recommendation, confidence, and `probed_at` per endpoint. Recomputed rows also refresh the endpoints' free public snapshots (page, badge, card). |
 | `x402_watch_create` | paid | Start monitoring one endpoint for 30 days. Alerts on payTo change (takeover signal), price/asset/network change, spec regression, delisting, and liveness. Supports up to 5 webhook + 5 Slack/Discord URLs per watch, all connection-tested before payment. Returns a one-time bearer secret + poll/edit/cancel URLs + `next_steps`. |
 | `x402_watch_events` | free | Poll the append-only event log of an active watch using the watch id and one-time secret. Use the `since` (endpoint events) and `watch_since` (lifecycle events) cursors to page forward; nothing between polls is lost. |
@@ -37,7 +38,7 @@ payment envelopes. Before your agent sends USDC to an unknown endpoint, ask:
 | `x402_watch_cancel` | free | Soft-cancel a watch: drops the endpoint back to normal probe cadence immediately, but the event log stays readable via `x402_watch_events` until the original `expires_at`. |
 | `x402_watch_renew` | paid | Extend an active watch by another 30 days. The secret stays the same. |
 
-Paid tools cost from **$0.001** (a semantic search) or **$0.005** (a single
+Paid tools cost from **$0.005** (a single
 trust / similar lookup) up to **~$0.50** (500-endpoint bulk batch) or **~$0.20**
 for a 30-day watch, charged over x402 (USDC on Base). If you set
 `X402_PRIVATE_KEY`, the server **auto-pays** within your `X402_MAX_USD` limit;
@@ -97,7 +98,8 @@ match returns `id`, `resource`, `score`, `grade`, raw cosine `similarity` (0-1;
 ranking buckets it), `description` (when advertised), and a free `endpointPage`
 URL. This is discovery, not verdicts: `score`/`grade` are null for unscored
 endpoints, and no recommendation or flag detail is included (use
-`x402_trust_score` for that). Cost is ~$0.001 per call.
+`x402_trust_score` for that). Free since 2026-10-05: no payment, no wallet
+needed; a per-IP rate limit applies.
 
 ### Watch / alerting (`x402_watch_create`, `x402_watch_events`, `x402_watch_edit`, `x402_watch_cancel`, `x402_watch_renew`)
 
