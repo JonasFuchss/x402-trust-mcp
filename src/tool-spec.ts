@@ -21,7 +21,7 @@ import { z } from "zod";
 
 /** Server identity reported in the MCP handshake (both transports). */
 export const MCP_SERVER_NAME = "x402-trust";
-export const MCP_VERSION = "1.14.0";
+export const MCP_VERSION = "1.16.0";
 /** User-Agent the npm (stdio) build sends to the public API. */
 export const MCP_USER_AGENT = `x402-trust-mcp/${MCP_VERSION}`;
 
@@ -141,17 +141,17 @@ function deliveryBlock(args: ToolArgs): Record<string, unknown> | undefined {
 export const TRUST_TOOL_SPECS: readonly TrustToolSpec[] = [
   {
     name: "x402_ecosystem_stats",
-    title: "x402 ecosystem stats (free)",
+    title: "x402 Trust ecosystem stats",
     description:
-      "Free aggregate snapshot of the entire x402 ecosystem (Base + Solana): how many endpoints are listed/active/delisted, what fraction are reachable and spec-compliant, and real on-chain USDC settlement volume / receivers / payers over the last 30 days. Use this to gauge market health before transacting.",
+      "Snapshot of the whole x402 ecosystem: endpoint counts, reachability, and real USDC settlement volume over 30 days. Use it to gauge market health.",
     inputSchema: {},
     backend: { paid: false, method: "GET", build: () => ({ path: "/trust/stats" }) },
   },
   {
     name: "x402_trust_leaderboard",
-    title: "x402 trust leaderboard (free)",
+    title: "x402 Trust leaderboard",
     description:
-      "Free leaderboard of the most trustworthy x402 hosts (providers), ranked by a deterministic trust score. Each host's score is the probe-weighted mean of its listed endpoints' scores, so providers are judged by their whole measured surface instead of one provider flooding the board with path variants. The per-endpoint score blends uptime, envelope compliance, latency, age, on-chain settlement activity and price stability. Latency is measured from a single EU vantage point and includes network distance to the endpoint (so it is only lightly weighted). The board is a materialized top-100; one call returns one page of at most 25 hosts plus 'total' (ranked hosts on the board), so page with 'offset' instead of pulling the whole board into context at once. Rows carry 'providerVerified' + 'providerName' when the host completed provider verification (informational, never a ranking input). Use this to discover reliable paid endpoints, then x402_search to list a chosen host's endpoints.",
+      "Top-100 ranking of the most trustworthy x402 hosts, scored by their whole measured surface. Page with offset, then use x402_search to list a host's endpoints.",
     inputSchema: {
       limit: z.number().int().min(1).max(25).optional().describe("Page size (1-25, default 25)"),
       offset: z.number().int().min(0).optional().describe("Skip this many ranked hosts for the next page (default 0). The board holds at most 100 hosts."),
@@ -171,9 +171,9 @@ export const TRUST_TOOL_SPECS: readonly TrustToolSpec[] = [
   },
   {
     name: "x402_verified_providers",
-    title: "x402 verified providers (free)",
+    title: "x402 Trust verified providers",
     description:
-      "Free list of PROVIDER-VERIFIED x402 hosts: providers who proved control of their domain (key file at /.well-known/x402-trust.txt) AND confirmed their contact email. Each row carries the host, its leaderboard-style probe-weighted trust 'score'/'grade' (null/'?' while too few probes exist; verification itself never changes the score), listed-endpoint and probe counts, and the provider's own published profile: 'orgName', 'supportUrl', 'docsUrl', 'address', 'description' and the confirmed 'contactEmail' (null until email-confirmed). One call returns one page of at most 25 providers plus 'total'; page with 'offset'. Use this to find accountable providers with real contact channels, then x402_search with the host as query to list that provider's endpoints.",
+      "List of hosts that proved domain control and confirmed a contact email. Verification is informational only, it never changes the score.",
     inputSchema: {
       limit: z.number().int().min(1).max(25).optional().describe("Page size (1-25, default 25)"),
       offset: z.number().int().min(0).optional().describe("Skip this many providers for the next page (default 0)"),
@@ -193,9 +193,9 @@ export const TRUST_TOOL_SPECS: readonly TrustToolSpec[] = [
   },
   {
     name: "x402_search",
-    title: "Keyword search over the x402 catalog (free)",
+    title: "Keyword search over the x402 catalog",
     description:
-      "Free KEYWORD search across the entire monitored x402 endpoint catalog (listed AND delisted endpoints). The query is matched as a case-insensitive substring against host, resource URL and service name: use it for 'list every endpoint of nsgoods.org', 'is api.example.com cataloged?', or path lookups like '/v1/weather' - exact substring questions the semantic search (which matches by MEANING, also free) deliberately does not answer. One call returns one page of at most 25 matches plus 'total' (the unpaged match count); page with 'offset'. Each match carries 'id', 'resource' URL, 'host', 'serviceName', 'description', 'delisted' (true = removed from discovery sources but still answering probes, page and badge stay live), cached trust 'score'/'grade' (null while unscored, up to 24h old), 'providerVerified' + 'providerName' (host completed provider verification; informational, never a ranking input), and a free 'endpointPage' URL. Deliberately NO verdict/flag detail: the per-endpoint verdict is x402_trust_score (paid); by-meaning discovery is x402_semantic_search (free).",
+      "Substring search over host, URL and service name across the catalog. For meaning-based search use x402_semantic_search instead.",
     inputSchema: {
       query: z.string().min(1).max(100).describe("Substring matched against host, resource URL and service name, e.g. a domain like 'nsgoods.org' or a path like '/v1/weather'. Matching is literal, not by meaning."),
       limit: z.number().int().min(1).max(25).optional().describe("Page size (1-25, default 25)"),
@@ -216,17 +216,17 @@ export const TRUST_TOOL_SPECS: readonly TrustToolSpec[] = [
   },
   {
     name: "x402_trust_preview",
-    title: "x402 trust preview — full sample reports (free)",
+    title: "x402 Trust preview: full sample reports",
     description:
-      "FREE showcase of what x402_trust_score returns. You do NOT choose the endpoint: this returns the COMPLETE paid-grade trust report (every field — exact score, scoreRange, full component breakdown, advertised price, on-chain settlement figures, all flags) for THREE endpoints picked from the current population — the best-scored, the median, and the worst-scored ('samples' each carry 'role', 'populationRank', and the full 'report'). Use it to see exactly what the paid output looks like across the entire quality range BEFORE paying. It cannot score an endpoint you choose — to evaluate YOUR OWN endpoint, call x402_trust_score (paid). Takes no arguments.",
+      "Sample pack: three complete trust reports (best, median, worst) exactly as x402_trust_score returns them. Takes no arguments.",
     inputSchema: {},
     backend: { paid: false, method: "GET", build: () => ({ path: "/v1/x402-trust-preview" }) },
   },
   {
     name: "x402_trust_score",
-    title: "x402 trust score for an endpoint (paid)",
+    title: "x402 Trust score for an endpoint",
     description:
-      "Trust score (0-100, grade A-F, or '?' when unmeasured) for a SPECIFIC x402 endpoint -- cataloged or not (uncataloged endpoints are live-probed on first query, auto-adopted, score carries a low-confidence first-contact flag). PLUS a machine-readable verdict ('recommendation': proceed|caution|avoid|parameterize|unverified|not-payable|free), the advertised price ('advertised.amountUsd'), a confidence-adjusted band ('scoreRange'), and structured flags ('flagsDetailed' with code/severity/message; any severity 'error' means avoid). The 'parameterize' verdict (with 'templated':true) means the resource URL still contains an unresolved template placeholder (e.g. {slug}, :slug or %7B…%7D) but we DO have a real signal (scored probes or a discovery fallback): substitute a valid value first, then the health metrics apply to the resolved URL. The 'unverified' verdict (grade '?') means we have NO measurement at all (every probe excluded and no discovery payment requirements to fall back on): it is unknown, not bad, so verify the endpoint yourself before paying. The 'not-payable' verdict (grade '?') means the URL answers a 402 with an EMPTY accepts[] (an auth/API-key gate such as sign-in-with-x), or answers a bare 401/403 with no payment envelope, so it is not an x402-payable resource at all and there is nothing to settle. The 'free' verdict (grade '?') means the endpoint answers plain requests with data (HTTP 200, no payment envelope) and has never presented a payment challenge: a free resource with no payment flow to grade, unmeasured by design, not a negative verdict. For templated per-item endpoints that ARE payable, a varying payTo/price is EXPECTED (one wallet/price per item): the report surfaces 'stats.payToVaries'+'payToDistinct30d' and 'advertised.amountRange30d' as a 'payto-varies'/'price-varies' note rather than a 'payto-changed-recently' hijack error; always pay the payTo in the live 402 quote, not a cached listing. 'stats.scoredProbes30d' vs 'stats.excluded30d' show how many probes actually back the score. When the endpoint's host completed provider verification (domain control proven with a public key in /.well-known/x402-trust.txt plus a confirmed contact email), the report carries 'providerVerified': true, 'providerName' (the provider's own organization name) and 'providerContact' (the confirmed contact address); verified endpoints also carry the 'provider-verified' info flag; verification never changes the score. Includes the full component breakdown, the provider-advertised 'serviceName' and 'description' (unverified provider claims, shown next to our independent metrics), the discovery 'sources' the endpoint was sighted in (bazaar, facilitator lists such as thirdweb, x402scan, mcpregistry, manual, customer; informational provenance, never a score input), and 30-day on-chain stats. Note: 'stats.avgLatencyMs' is measured from a single EU vantage point and includes network distance to the endpoint (see 'stats.latencyVantage'), so a geographically distant endpoint reads slower even when its server is fast. One call answers WHETHER and at WHAT PRICE to use an endpoint. Call this BEFORE paying an unknown x402 endpoint to avoid dead, fraudulent, or recently-hijacked services. Each paid call also refreshes the endpoint's free public snapshot (page, badge, card) immediately. Pay-per-call over x402; auto-pays if a wallet is configured, otherwise returns the price quote.",
+      "The full trust verdict for one x402 endpoint: score 0-100, grade, recommendation (proceed, caution, avoid, ...), price, and flags. Unknown endpoints get live-probed on the spot.",
     inputSchema: {
       resource: z.string().describe("Full x402 resource URL to evaluate, e.g. https://api.example.com/v1/thing"),
     },
@@ -238,9 +238,9 @@ export const TRUST_TOOL_SPECS: readonly TrustToolSpec[] = [
   },
   {
     name: "x402_endpoint_history",
-    title: "x402 endpoint observation history (paid)",
+    title: "x402 Trust endpoint observation history",
     description:
-      "Raw observation time-series for a SPECIFIC x402 endpoint: listing/delisting/relisting events, advertised price changes, payTo changes, and probe results over the requested window (1-90 days). Each probe carries 'ts', 'ok', 'latencyMs', 'amount' plus its outcome 'status' (success, dns_error, timeout, http_error, ...), 'httpStatus', an 'error' detail and an 'excluded' flag; excluded probes carry no endpoint signal (rate limits, unresolved URL templates, resolver outages on our side) and never count as downtime. A 'probeSummary' aggregates the window: counts by status, longest failure streak, per-day failure breakdown. Per-probe 'latencyMs' is measured from a single EU vantage point and includes network distance to the endpoint. Pay-per-call over x402; auto-pays if a wallet is configured, otherwise returns the price quote.",
+      "Raw probe and event history for one endpoint over 1-90 days: price and payTo changes, failures, latencies, plus a summary. Excluded probes never count as downtime.",
     inputSchema: {
       resource: z.string().describe("Full x402 resource URL"),
       days: z.number().int().min(1).max(90).optional().describe("Lookback window in days (default 30)"),
@@ -258,9 +258,9 @@ export const TRUST_TOOL_SPECS: readonly TrustToolSpec[] = [
   },
   {
     name: "x402_find_alternatives",
-    title: "Find better-scored alternatives to an x402 endpoint (paid)",
+    title: "Find better-scored alternatives to an x402 endpoint",
     description:
-      "Given an x402 endpoint URL, returns the top semantically-similar endpoints (matched on advertised purpose via description embeddings) that currently OUT-SCORE it on the deterministic trust score. Use this to route away from a mediocre/dead/expensive endpoint toward a more reliable, better-settled one serving the SAME function — e.g. before paying, check if a higher-graded equivalent exists. Each alternative carries its trust 'score', 'grade', 'recommendation', cosine 'similarity' (0-1), 'amountUsd' price, 'priceCeiling' (true when amountUsd is an x402 'upto' authorization ceiling, not a fixed per-call price), and a free 'endpointPage' URL. It also carries 'hasDescription': false means the endpoint advertises no description, so its similarity was computed from service name + URL path tokens only, a weaker signal worth more skepticism than a description-based match. Same-host siblings and 'avoid'-flagged endpoints are excluded. An empty 'alternatives' array is a valid answer meaning nothing beats the subject. Similarity is independent of latency/geography. Pay-per-call over x402 (~$0.005); auto-pays if a wallet is configured, otherwise returns the price quote.",
+      "Finds semantically similar endpoints that out-score a given one. Empty result means nothing beats it.",
     inputSchema: {
       resource: z.string().describe("Full x402 resource URL to find better alternatives for, e.g. https://api.example.com/v1/thing"),
       limit: z.number().int().min(1).max(25).optional().describe("Max alternatives to return (1-25, default 5)"),
@@ -281,9 +281,9 @@ export const TRUST_TOOL_SPECS: readonly TrustToolSpec[] = [
   },
   {
     name: "x402_semantic_search",
-    title: "Semantic search over the x402 catalog (free)",
+    title: "Semantic search over the x402 catalog",
     description:
-      "Free-text SEMANTIC SEARCH across the entire monitored x402 endpoint catalog. Given a plain-language query (e.g. \"weather forecast\", \"image generation\", \"EVM gas price oracle\"), returns the up to 25 endpoints whose advertised purpose is semantically closest. Ranking is deterministic and fully specified: cosine similarity bucketed to whole percentage points first (80.3% and 80.5% are the same bucket, so sub-percent noise never outranks a better endpoint), then trust score (0-100), then described-before-undescribed, then endpoint id as a stable final tiebreak. Matches below a 0.5 cosine-similarity floor are dropped entirely, so a query can return fewer than the requested limit (or none). Endpoints that advertise no description are still matched: they are embedded from their service name and URL path tokens instead of a written description (host name as a last resort). The EXACT effect of a missing description: no fixed point deduction, and no direct similarity malus either; the only deterministic penalty is the described-before-undescribed tiebreak (at equal similarity bucket AND equal trust score, a described endpoint ranks first). Beyond that the effect is purely indirect: the shorter fallback text typically yields lower cosine similarity than a prose description, so undescribed endpoints tend to land in lower similarity buckets, by a query-dependent (never fixed) amount. Use this for DISCOVERY: find candidate endpoints for a capability before checking any of them in depth. Each match carries 'id', 'resource' URL, trust 'score' (0-100), 'grade' (A-F), raw cosine 'similarity' (0-1; ranking buckets it to whole percents), 'amountUsd' price (null when not advertised), 'priceCeiling' (true when amountUsd is an x402 'upto' authorization ceiling, not a fixed per-call price), 'providerVerified' + 'providerName' (host completed provider verification; informational, never a ranking input), 'description' when advertised, and a free 'endpointPage' URL. 'score'/'grade' are null for endpoints not yet scored. Deliberately NO verdict/recommendation or flag detail: the per-endpoint trust report (x402_trust_score) carries those. FREE since 2026-10-05: no payment and no wallet needed; a per-IP rate limit applies (429 on excess).",
+      "Meaning-based search across the catalog: describe the capability you need in plain words. Discovery only, no verdicts.",
     inputSchema: {
       query: z.string().min(2).max(500).describe("Free-text search query, e.g. \"weather forecast\". Describe the capability you need in plain words; matching is by meaning, not substrings."),
       limit: z.number().int().min(1).max(25).optional().describe("Max matches to return (1-25, default 25)"),
@@ -301,9 +301,9 @@ export const TRUST_TOOL_SPECS: readonly TrustToolSpec[] = [
   },
   {
     name: "x402_trust_bulk",
-    title: "x402 bulk trust scoring (paid)",
+    title: "x402 Trust bulk scoring",
     description:
-      "Score up to 500 x402 endpoints in a SINGLE paid call. Returns the authoritative full-density trust score (0-100, grade A-F or '?' when unmeasured, recommendation proceed|caution|avoid|parameterize|unverified|not-payable|free), confidence, `probed_at`, `computed_at`, and a `recomputed` flag for each requested resource. Cache rows older than ~15 minutes are recomputed on-demand from the latest stored probes and settlements (no live network re-probe), so bulk scores typically reflect reality within minutes. Each recomputed row also refreshes that endpoint's free public snapshot (page, badge, card) immediately. Per-request recompute limits apply: at most 50 endpoints / 8 seconds are recomputed; the response includes `recompute_limit_hit` and `recompute_limit` so you know if the cap was reached. The smallest tier that fits your request is selected automatically (10/50/100/200/500 endpoints; ~$0.045/$0.20/$0.325/$0.40/$0.50). Resources not in our observation set return `found:false`; you still pay for the batch. For a fresh live probe, use `x402_trust_score`. Pay-per-call over x402; auto-pays if a wallet is configured, otherwise returns the price quote.",
+      "Score up to 500 endpoints in one call; the cheapest fitting tier is picked automatically. Unknown URLs come back found:false, the batch is charged either way.",
     inputSchema: {
       resources: z
         .array(z.string())
@@ -335,9 +335,9 @@ export const TRUST_TOOL_SPECS: readonly TrustToolSpec[] = [
   },
   {
     name: "x402_watch_create",
-    title: "x402 watch — create 30-day endpoint monitor (paid)",
+    title: "x402 Trust watch: create 30-day endpoint monitor",
     description:
-      "Start monitoring ONE x402 endpoint for 30 days. Get alerted on changes that break autonomous payment: payTo changes (possible takeover/rug — but for a templated per-item endpoint a payTo move is expected variance and is delivered as severity 'warn', not 'critical'), price changes, asset/network changes, 402-spec regressions, delisting, and liveness down/recovered. A self-healing endpoint that repeatedly blips is auto-detected as `liveness_flapping` and its individual down/up alerts are coalesced into a single flapping notice (plus one 'stopped flapping' notice when it stabilizes) so you are not spammed. Returns a one-time bearer secret + poll URL + renew URL + edit URL + cancel URL + machine-readable `next_steps`. Use x402_watch_events to poll the append-only log, or configure push delivery to one or more signed HTTPS webhooks and/or Slack/Discord incoming webhooks (max 5 each). `webhook_url`/`slack_url` accept a single URL string or an array of URLs. All URLs are connection-tested BEFORE payment — unreachable URLs are rejected with no charge (retry with a corrected URL). On success the response reports per-URL delivery in `delivery.connection_test`. Webhook signature: `x-signature` = 'sha256=' + HMAC-SHA256(body) keyed by hex(sha256(secret)), NOT the raw secret. Pay-per-call over x402 (~$0.20); auto-pays if a wallet is configured, otherwise returns the price quote.",
+      "30-day monitor for one endpoint with alerts on payTo or price changes, delisting, spec regressions and downtime, via polling or webhooks. Returns a one-time secret, keep it.",
     inputSchema: {
       endpoint: z.string().describe("Full x402 resource URL to watch. It must already be in our observation set."),
       events: z.array(z.string()).optional().describe("Event types to subscribe to (default all): payto_change, price_change, asset_network_change, spec_regression, delisting, liveness_down, liveness_recovered, liveness_flapping, latency_regression."),
@@ -364,9 +364,9 @@ export const TRUST_TOOL_SPECS: readonly TrustToolSpec[] = [
   },
   {
     name: "x402_watch_events",
-    title: "x402 watch — poll event log (free)",
+    title: "x402 Trust watch: poll event log",
     description:
-      "Read the append-only event log for an active x402 watch. Returns two streams: `events` (endpoint changes — payTo/price/asset/spec/delisting/liveness) and `watch_events` (lifecycle feedback — created/edited/cancelled/renewed/expiring/expired). Nothing between two polls is lost. Provide the watch_id and the one-time secret from x402_watch_create. Advance `since` with the returned `next_cursor` (endpoint events) and `watch_since` with `watch_events_cursor` (lifecycle events). Cursors/ids are GLOBAL sequences shared across watches (a watch's first event id may be >1); always page by the returned cursor rather than assuming they start at 1. Cancelled watches remain READABLE until expires_at (no new events accrue). If the watch has push delivery, still poll to reconcile missed webhooks.",
+      "Poll a watch's event log with watch_id and secret, paging by the returned cursors. Nothing between polls is lost.",
     inputSchema: {
       watch_id: z.string().describe("Watch id returned by x402_watch_create."),
       secret: z.string().describe("The one-time bearer secret returned by x402_watch_create."),
@@ -392,9 +392,9 @@ export const TRUST_TOOL_SPECS: readonly TrustToolSpec[] = [
   },
   {
     name: "x402_watch_edit",
-    title: "x402 watch — edit delivery URLs / sensitivity / events (free)",
+    title: "x402 Trust watch: edit delivery URLs, sensitivity or events",
     description:
-      "Edit an active watch: change webhook/Slack URLs, liveness sensitivity, or subscribed events. Bearer-authed with the secret from x402_watch_create. Newly-added URLs are connection-tested before the change is persisted; if any new URL fails, the existing config is unchanged. Delivery fields are full-replace per channel (omit to leave that channel unchanged). Returns the updated watch view.",
+      "Change a watch's webhook URLs, sensitivity or subscribed events. New URLs are tested first; failures leave the old config untouched.",
     inputSchema: {
       watch_id: z.string().describe("Watch id returned by x402_watch_create."),
       secret: z.string().describe("The one-time bearer secret returned by x402_watch_create."),
@@ -424,9 +424,9 @@ export const TRUST_TOOL_SPECS: readonly TrustToolSpec[] = [
   },
   {
     name: "x402_watch_cancel",
-    title: "x402 watch — cancel early (free)",
+    title: "x402 Trust watch: cancel early",
     description:
-      "Soft-cancel a watch immediately: no new events accrue, but the event log stays READABLE via x402_watch_events until the original expires_at (cancel is not a delete). Probing drops back to normal cadence as soon as no active watches cover the endpoint. Bearer-authed with the secret from x402_watch_create. Free and idempotent.",
+      "Stop a watch now; its log stays readable until expiry. Idempotent.",
     inputSchema: {
       watch_id: z.string().describe("Watch id returned by x402_watch_create."),
       secret: z.string().describe("The one-time bearer secret returned by x402_watch_create."),
@@ -439,9 +439,9 @@ export const TRUST_TOOL_SPECS: readonly TrustToolSpec[] = [
   },
   {
     name: "x402_watch_renew",
-    title: "x402 watch — renew 30 days (paid)",
+    title: "x402 Trust watch: renew 30 days",
     description:
-      "Extend an active x402 watch by another 30 days before it expires. The secret stays the same. Pay-per-call over x402 (~$0.20); auto-pays if a wallet is configured, otherwise returns the price quote.",
+      "Add another 30 days to an active watch. Same secret.",
     inputSchema: {
       watch_id: z.string().describe("Watch id returned by x402_watch_create."),
     },
