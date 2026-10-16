@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.JonasFuchss/x402-trust-mcp",
 "description": "Discover x402 endpoints and check their trust score before your agent pays them.",
-      "version": "1.16.0",
+      "version": "1.17.0",
   "websiteUrl": "https://x402-trust.com",
   "repository": {
     "url": "https://github.com/JonasFuchss/x402-trust-mcp",
@@ -13,7 +13,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "x402-trust-mcp",
-      "version": "1.16.0",
+      "version": "1.17.0",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"

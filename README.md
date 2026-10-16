@@ -86,6 +86,7 @@ To enable autonomous payment for the paid tools, add a funded Base USDC wallet:
 | `X402_MAX_TOTAL_USD` | `1.00` | Cumulative auto-pay cap per process. 0 = unlimited. |
 | `X402_MAX_CALLS` | `1000` | Max paid calls per process. 0 = unlimited. |
 | `X402_TIMEOUT_MS` | `20000` | Request timeout. |
+| `X402_BASE_RPC_URL` | public Base RPCs | Endpoint for the pre-signing USDC balance check (free `eth_call`; defaults to the public Base mainnet/Sepolia RPCs). |
 
 The free tools work with no configuration at all.
 
@@ -95,7 +96,10 @@ The free tools work with no configuration at all.
 spend on trust lookups. The key never leaves your machine; it signs EIP-3009
 payment authorizations locally, after policy checks: chain allow-list (Base
 mainnet by default), canonical USDC contract verification, and the spend and
-call-count caps above.
+call-count caps above. Before every payment the client re-reads the wallet's
+USDC balance: a wallet that cannot cover the quote is refused locally, before
+anything is signed, so an empty wallet never produces failed settlement
+attempts, and a top-up takes effect on the very next call.
 
 ## Response signatures
 

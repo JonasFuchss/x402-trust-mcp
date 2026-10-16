@@ -15,6 +15,27 @@ describe("autoPayFailureHint (P2-5)", () => {
     expect(h).toMatch(/balance too low/);
     expect(h).toContain("0xdeadbeef");
   });
+  it("names the local pre-check refusal (no payment attempted, top-up works immediately)", () => {
+    const h = autoPayFailureHint(0.04, {
+      error: "auto-pay blocked: the payer wallet 0xabc holds 0.004000 USDC ...",
+      reason: "insufficient_funds_local",
+    });
+    expect(h).toMatch(/balance checked before signing/);
+    expect(h).toMatch(/takes effect immediately/);
+    // The marker embeds "insufficient_funds"; the hint must NOT degrade to
+    // the generic settle-failure funds branch.
+    expect(h).not.toMatch(/balance too low/);
+  });
+  it("warns reconcile-first on an uncertain settlement, never a blind retry", () => {
+    const h = autoPayFailureHint(0.04, {
+      error: "payment settlement outcome is uncertain: ...",
+      reason: "settlement_uncertain",
+      txHash: "0xabc",
+    });
+    expect(h).toMatch(/may have landed on-chain/);
+    expect(h).toMatch(/Reconcile the transaction/);
+    expect(h).toMatch(/can charge you twice/);
+  });
   it("detects a session spend/call-count guard", () => {
     expect(autoPayFailureHint(0.04, { error: "cumulative spend cap reached ($0.04 + $0.04 > $0.05)" })).toMatch(/spend\/call-count guard/);
   });

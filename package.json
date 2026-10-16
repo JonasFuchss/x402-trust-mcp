@@ -1,6 +1,6 @@
 {
   "name": "x402-trust-mcp",
-  "version": "1.16.0",
+  "version": "1.17.0",
   "mcpName": "io.github.JonasFuchss/x402-trust-mcp",
   "type": "module",
   "description": "MCP server for the x402 ecosystem: discovery (semantic and keyword search, leaderboard, verified providers, ecosystem stats) plus trust scores, bulk scoring, endpoint history, and 30-day endpoint watches, with optional auto-pay over x402. Backed by x402-trust.com's 24/7 monitoring of every listed x402 endpoint (Base + Solana).",

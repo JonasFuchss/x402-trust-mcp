@@ -15,7 +15,8 @@
  */
 import { signTypedData } from "viem/accounts";
 import { privateKeyToAccount } from "viem/accounts";
-import type { Address, Hex } from "viem";
+import { createPublicClient, http, type Address, type Hex, type PublicClient } from "viem";
+import { base, baseSepolia } from "viem/chains";
 
 const TRANSFER_WITH_AUTH_TYPES = {
   TransferWithAuthorization: [
@@ -244,17 +245,109 @@ export interface PaidCallResult {
 }
 
 /**
+ * Balance pre-check (the underfunded-wallet guard, 2026-10-16).
+ *
+ * Instead of signing payments that can only revert at settle time, paidPost
+ * reads the payer's USDC balance BEFORE signing whenever a balanceCheck is
+ * configured. A wallet that cannot cover the quote is refused locally: no
+ * signature, no paid request, no facilitator round trip, no settle-failed
+ * spam (the incident behind this: an agent batch-fired 6 paid calls, the
+ * wallet went dry after 2, and every remaining call plus retries reverted
+ * at settle with no actionable error).
+ *
+ * Deliberately stateless: the balance is re-read on EVERY call, so a top-up
+ * takes effect on the very next call. No process restart, no cooldown, no
+ * guard state to reset. Fail-OPEN on RPC errors (the reader returns null):
+ * a broken RPC must not block paying customers; the server-side settle
+ * diagnosis (reason "insufficient_funds" with a confirmed balance) remains
+ * as the backstop.
+ */
+
+const BALANCE_OF_ABI = [
+  {
+    inputs: [{ name: "account", type: "address" }],
+    name: "balanceOf",
+    outputs: [{ name: "", type: "uint256" }],
+    stateMutability: "view",
+    type: "function",
+  },
+] as const;
+
+/** Reads a token balance; null means the read itself failed (fail-open). */
+export type BalanceReader = (payer: Address, chainId: number, asset: Address) => Promise<bigint | null>;
+
+/** Default public RPCs per chain, per docs.base.org ("Connect to Base").
+ * Free, HTTP-only, rate-limited ("not suitable for production traffic" is
+ * aimed at apps serving users; one eth_call per paid MCP call is trivially
+ * within budget). Override with X402_BASE_RPC_URL. */
+export const DEFAULT_RPC_URLS: Record<number, string> = {
+  8453: "https://mainnet.base.org",
+  84532: "https://sepolia.base.org",
+};
+
+/**
+ * Production BalanceReader over a public (or operator-supplied) RPC.
+ * One viem client per chain, created lazily; read failures return null.
+ */
+export function createUsdcBalanceReader(rpcUrl?: string): BalanceReader {
+  const clients = new Map<number, PublicClient>();
+  return async (payer, chainId, asset) => {
+    try {
+      let client = clients.get(chainId);
+      if (client === undefined) {
+        const chain = chainId === 84532 ? baseSepolia : base;
+        const url = rpcUrl ?? DEFAULT_RPC_URLS[chainId] ?? DEFAULT_RPC_URLS[8453]!;
+        client = createPublicClient({ chain, transport: http(url, { timeout: 10_000 }) }) as PublicClient;
+        clients.set(chainId, client);
+      }
+      return await client.readContract({
+        address: asset,
+        abi: BALANCE_OF_ABI,
+        functionName: "balanceOf",
+        args: [payer],
+      });
+    } catch {
+      return null;
+    }
+  };
+}
+
+/** Opt-in balance pre-check config for paidPost. */
+export interface BalanceCheck {
+  readBalance: BalanceReader;
+}
+
+/**
+ * A 402 on the PAID request only proves the payment was NOT consumed when
+ * the server says so explicitly (`notCharged:true`) or re-issues a fresh
+ * quote (`accepts` present): verification always runs before settlement, so
+ * a re-quoted request never reached settle. Any other post-payment 402 is a
+ * settle failure with an OPEN outcome: the authorization may already be
+ * spent (CDP documents a spent nonce surfacing as plain `invalid_payload`),
+ * or the settlement may have landed (`settlement_pending` family, x402 v2
+ * spec section 9). In both cases the reservation must stay.
+ */
+function isProvablyUnconsumed(data: unknown): boolean {
+  if (!data || typeof data !== "object") return false;
+  const o = data as Record<string, unknown>;
+  return o.notCharged === true || Array.isArray(o.accepts);
+}
+
+/**
  * Process-lifetime spend tracker. A per-call ceiling alone can't stop an agent
  * (or a compromised server) from draining a funded wallet $0.05 at a time over
  * unlimited calls, so we also enforce a cumulative cap and a call-count cap.
  *
  * Usage: check() + reserve() together BEFORE signing (synchronous pair, so no
- * concurrent call can slip between them), then release() ONLY if the server
- * explicitly rejected the payment (a 402 on the paid request). Any other
- * outcome — success, 5xx, network failure — keeps the reservation, because
- * x402 settles on-chain BEFORE the server writes its response: a crashed or
- * hostile server can take the money and never return 2xx. Recording spend
- * only on 2xx made the caps a per-call limit with unlimited retries.
+ * concurrent call can slip between them), then release() ONLY when the server
+ * provably did not consume the payment (isProvablyUnconsumed: a notCharged
+ * marker or a re-issued quote on the 402). Any other outcome — success, 5xx,
+ * network failure, or an UNMARKED post-payment 402 (settle failure: the
+ * authorization may already be spent, or the settlement may have landed) —
+ * keeps the reservation, because x402 settles on-chain BEFORE the server
+ * writes its response: a crashed or hostile server can take the money and
+ * never return 2xx. Recording spend only on 2xx made the caps a per-call
+ * limit with unlimited retries.
  */
 export class SpendTracker {
   private spentUsd = 0;
@@ -309,6 +402,9 @@ export async function paidPost(opts: {
   guard?: PaymentGuard;
   /** process-lifetime cumulative spend + call-count cap. */
   spendTracker?: SpendTracker;
+  /** Balance pre-check before signing. Refuses locally when the wallet
+   * provably cannot cover the quote; fail-open when the read fails. */
+  balanceCheck?: BalanceCheck;
 }): Promise<PaidCallResult> {
   const doPost = (headers: Record<string, string>): Promise<Response> => {
     const ctrl = new AbortController();
@@ -351,6 +447,35 @@ export async function paidPost(opts: {
     return { paid: false, status: 402, data: { error: `unsafe payment quote: ${guardReason}` }, quote };
   }
 
+  // Balance pre-check BEFORE any spend accounting and before signing: a
+  // wallet that provably cannot cover the quote is refused locally (no
+  // signature, no paid request). Re-read on every call, so a top-up takes
+  // effect immediately. Fail-open when the read fails (backstop: the
+  // server-side settle diagnosis).
+  if (opts.balanceCheck) {
+    const payer = privateKeyToAccount(opts.privateKey).address;
+    const chainId = parseCaip2ChainId(accept.network)!; // validated above
+    const balance = await opts.balanceCheck.readBalance(payer, chainId, accept.asset);
+    if (balance !== null && balance < BigInt(accept.amount)) {
+      return {
+        paid: false,
+        status: 402,
+        data: {
+          error:
+            `auto-pay blocked: the payer wallet ${payer} holds ${(Number(balance) / 1_000_000).toFixed(6)} USDC ` +
+            `on ${accept.network}, but this call costs $${amountUsd} (${accept.amount} units). ` +
+            `Top up the wallet and retry; the balance is re-checked before every payment, ` +
+            `so a top-up takes effect on the very next call. No payment was attempted.`,
+          reason: "insufficient_funds_local",
+          payer,
+          balanceUnits: balance.toString(),
+          requiredUnits: accept.amount,
+        },
+        quote,
+      };
+    }
+  }
+
   // Enforce the process-lifetime cumulative + call-count caps. check+reserve is
   // a synchronous pair — no await between them, so concurrent paid calls can't
   // both pass the check before either records (race → overshoot).
@@ -373,15 +498,19 @@ export async function paidPost(opts: {
       /* ignore */
     }
   }
-  // The reservation stays unless the server EXPLICITLY rejected the payment
-  // (402 on the paid request = not consumed). A 5xx/transport failure after a
-  // submitted payment still counts: settlement happens before the response.
-  if (second.status === 402 && opts.spendTracker) opts.spendTracker.release(amountUsd);
+  const secondData = await safeJson(second);
+  // The reservation stays unless the server PROVABLY did not consume the
+  // payment (notCharged marker or a re-issued quote; see isProvablyUnconsumed).
+  // A 5xx/transport failure after a submitted payment still counts:
+  // settlement happens before the response.
+  if (second.status === 402 && opts.spendTracker && isProvablyUnconsumed(secondData)) {
+    opts.spendTracker.release(amountUsd);
+  }
 
   return {
     paid: second.ok,
     status: second.status,
-    data: await safeJson(second),
+    data: secondData,
     quote,
     ...(paymentResponse ? { paymentResponse } : {}),
   };

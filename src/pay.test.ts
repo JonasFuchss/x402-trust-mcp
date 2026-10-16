@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { parse402, signPayment, validateAccept, paidPost, SpendTracker, type Accept } from "./pay.js";
+import { parse402, signPayment, validateAccept, paidPost, SpendTracker, type Accept, type BalanceReader } from "./pay.js";
 
 const ACCEPT_BODY = {
   x402Version: 2,
@@ -238,7 +238,7 @@ describe("SpendTracker reserve/release (anti-drain)", () => {
 
   const KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" as `0x${string}`;
 
-  function stubFetchSequence(paidStatus: number): void {
+  function stubFetchSequence(paidStatus: number, paidBody?: unknown): { calls: () => number } {
     let call = 0;
     vi.stubGlobal("fetch", async () => {
       call++;
@@ -248,11 +248,12 @@ describe("SpendTracker reserve/release (anti-drain)", () => {
           headers: { "content-type": "application/json", "payment-required": b64(ACCEPT_BODY) },
         });
       }
-      return new Response(JSON.stringify(paidStatus === 200 ? { ok: true } : { error: "boom" }), {
+      return new Response(JSON.stringify(paidBody ?? (paidStatus === 200 ? { ok: true } : { error: "boom" })), {
         status: paidStatus,
         headers: { "content-type": "application/json" },
       });
     });
+    return { calls: () => call };
   }
 
   it("keeps the spend counted when the paid call returns 5xx (settle-then-crash)", async () => {
@@ -273,8 +274,8 @@ describe("SpendTracker reserve/release (anti-drain)", () => {
     expect(tracker.totalSpentUsd).toBeCloseTo(0.005);
   });
 
-  it("releases the reservation when the paid call is explicitly rejected with 402", async () => {
-    stubFetchSequence(402);
+  it("releases the reservation when the paid call is explicitly rejected with 402 notCharged", async () => {
+    stubFetchSequence(402, { error: "payment invalid: signature recovery failed", notCharged: true });
     const tracker = new SpendTracker(1, 10);
     await paidPost({
       url: "https://api.example.com/v1/x",
@@ -287,6 +288,57 @@ describe("SpendTracker reserve/release (anti-drain)", () => {
     expect(tracker.totalSpentUsd).toBe(0);
   });
 
+  it("releases the reservation when the paid 402 re-issues a fresh quote (accepts)", async () => {
+    // A re-quoted request never reached settle: verification runs before
+    // settlement, so the payment provably was not consumed.
+    stubFetchSequence(402, ACCEPT_BODY);
+    const tracker = new SpendTracker(1, 10);
+    await paidPost({
+      url: "https://api.example.com/v1/x",
+      body: {},
+      privateKey: KEY,
+      maxAmountUsd: 1,
+      timeoutMs: 5000,
+      spendTracker: tracker,
+    });
+    expect(tracker.totalSpentUsd).toBe(0);
+  });
+
+  it("keeps the reservation on an UNMARKED post-payment 402 (settle failure, outcome open)", async () => {
+    // A bare settle-failure 402 proves nothing: the authorization may already
+    // be spent (a spent nonce surfaces as plain invalid_payload, per the CDP
+    // facilitator docs), so the reservation must stay.
+    stubFetchSequence(402, { error: "payment settle failed: facilitator /settle 400: invalid_payload" });
+    const tracker = new SpendTracker(1, 10);
+    await paidPost({
+      url: "https://api.example.com/v1/x",
+      body: {},
+      privateKey: KEY,
+      maxAmountUsd: 1,
+      timeoutMs: 5000,
+      spendTracker: tracker,
+    });
+    expect(tracker.totalSpentUsd).toBeCloseTo(0.005);
+  });
+
+  it("keeps the reservation on a settlement_uncertain 402 (payment may have landed)", async () => {
+    stubFetchSequence(402, {
+      error: "payment settlement outcome is uncertain: ...",
+      reason: "settlement_uncertain",
+      txHash: "0xabc",
+    });
+    const tracker = new SpendTracker(1, 10);
+    await paidPost({
+      url: "https://api.example.com/v1/x",
+      body: {},
+      privateKey: KEY,
+      maxAmountUsd: 1,
+      timeoutMs: 5000,
+      spendTracker: tracker,
+    });
+    expect(tracker.totalSpentUsd).toBeCloseTo(0.005);
+  });
+
   it("check+reserve is atomic for concurrent calls (no overshoot)", async () => {
     const t = new SpendTracker(0.05, 0);
     expect(t.check(0.05)).toBeNull();
@@ -295,5 +347,100 @@ describe("SpendTracker reserve/release (anti-drain)", () => {
     expect(t.check(0.01)).toMatch(/cumulative spend cap/);
     t.release(0.05);
     expect(t.check(0.05)).toBeNull();
+  });
+});
+
+describe("balance pre-check (underfunded-wallet guard, 2026-10-16)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" as `0x${string}`;
+  // ACCEPT_BODY quotes 5000 units on eip155:8453.
+
+  function stubFetchSequence(paidBody: unknown, paidStatus = 200): { calls: () => number } {
+    let call = 0;
+    // Header-driven, not call-count-driven: a locally REFUSED call consumes
+    // only the quote fetch, so parity-based stubs desync.
+    vi.stubGlobal("fetch", async (_url: unknown, init?: { headers?: Record<string, string> }) => {
+      call++;
+      const hasPayment = init?.headers?.["PAYMENT-SIGNATURE"] !== undefined;
+      if (!hasPayment) {
+        return new Response(JSON.stringify(ACCEPT_BODY), {
+          status: 402,
+          headers: { "content-type": "application/json", "payment-required": b64(ACCEPT_BODY) },
+        });
+      }
+      return new Response(JSON.stringify(paidBody), {
+        status: paidStatus,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    return { calls: () => call };
+  }
+
+  const OPTS = {
+    url: "https://api.example.com/v1/x",
+    body: {},
+    privateKey: KEY,
+    maxAmountUsd: 1,
+    timeoutMs: 5000,
+  } as const;
+
+  it("refuses LOCALLY when the wallet cannot cover the quote: no signature, no paid request", async () => {
+    const stub = stubFetchSequence({ ok: true });
+    const readBalance: BalanceReader = async () => 4_000n; // quote is 5000
+    const r = await paidPost({ ...OPTS, balanceCheck: { readBalance } });
+    expect(r.paid).toBe(false);
+    expect(r.status).toBe(402);
+    const data = r.data as { reason: string; balanceUnits: string; requiredUnits: string; payer: string; error: string };
+    expect(data.reason).toBe("insufficient_funds_local");
+    expect(data.balanceUnits).toBe("4000");
+    expect(data.requiredUnits).toBe("5000");
+    expect(data.error).toContain("0.004000 USDC");
+    expect(data.error).toContain("No payment was attempted");
+    expect(data.payer).toMatch(/^0x[0-9a-fA-F]{40}$/);
+    expect(r.quote).toBeDefined();
+    // Only the quote fetch happened — nothing was signed or sent after it.
+    expect(stub.calls()).toBe(1);
+  });
+
+  it("pays normally when the balance covers the quote", async () => {
+    const stub = stubFetchSequence({ ok: true });
+    const readBalance: BalanceReader = async () => 1_000_000n;
+    const r = await paidPost({ ...OPTS, balanceCheck: { readBalance } });
+    expect(r.paid).toBe(true);
+    expect(stub.calls()).toBe(2);
+  });
+
+  it("fails OPEN when the balance read fails (a broken RPC must not block paying)", async () => {
+    const stub = stubFetchSequence({ ok: true });
+    const readBalance: BalanceReader = async () => null;
+    const r = await paidPost({ ...OPTS, balanceCheck: { readBalance } });
+    expect(r.paid).toBe(true);
+    expect(stub.calls()).toBe(2);
+  });
+
+  it("recovery is instant: a top-up works on the very next call, no restart or cooldown", async () => {
+    const stub = stubFetchSequence({ ok: true });
+    // First call: wallet empty. Then the operator tops up (balance flips).
+    let balance = 4_000n;
+    const readBalance: BalanceReader = async () => balance;
+    const first = await paidPost({ ...OPTS, balanceCheck: { readBalance } });
+    expect(first.paid).toBe(false);
+    expect((first.data as { reason: string }).reason).toBe("insufficient_funds_local");
+
+    balance = 1_000_000n; // top-up landed
+    const second = await paidPost({ ...OPTS, balanceCheck: { readBalance } });
+    expect(second.paid).toBe(true);
+    expect(stub.calls()).toBe(3); // 1 (quote) + 2 (quote + paid)
+  });
+
+  it("a locally refused call does NOT consume spend-tracker budget", async () => {
+    stubFetchSequence({ ok: true });
+    const tracker = new SpendTracker(1, 10);
+    const readBalance: BalanceReader = async () => 0n;
+    await paidPost({ ...OPTS, balanceCheck: { readBalance }, spendTracker: tracker });
+    expect(tracker.totalSpentUsd).toBe(0);
   });
 });

@@ -32,15 +32,22 @@
  *   X402_MAX_TOTAL_USD    default 1.00 — cumulative auto-pay cap per process (0 = unlimited)
  *   X402_MAX_CALLS        default 1000 — max paid calls per process (0 = unlimited)
  *   X402_TIMEOUT_MS       default 20000
+ *   X402_BASE_RPC_URL     default public Base RPCs — endpoint for the
+ *                         pre-signing USDC balance check (eth_call, free)
  *
  * Safety: paid tools only ever sign EIP-3009 USDC transfers whose asset is the
  * canonical USDC contract on an allow-listed chain (Base mainnet by default);
  * a malicious 402 cannot redirect the payment to an arbitrary token or chain.
+ * Before every payment the client re-reads the wallet's USDC balance
+ * (eth_call over a public Base RPC, X402_BASE_RPC_URL to override): a wallet
+ * that cannot cover the quote is refused LOCALLY, before anything is signed,
+ * so an empty wallet never produces failed settlement attempts, and a top-up
+ * takes effect on the very next call. Session spend/call caps apply on top.
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { Hex } from "viem";
-import { paidPost, SpendTracker } from "./pay.js";
+import { paidPost, createUsdcBalanceReader, SpendTracker } from "./pay.js";
 import {
   MCP_SERVER_NAME,
   MCP_VERSION,
@@ -101,6 +108,9 @@ const MAX_TOTAL_USD = envNum("X402_MAX_TOTAL_USD", 1.0);
 const MAX_CALLS = Math.floor(envNum("X402_MAX_CALLS", 1000));
 const AUTO_PAY = PRIVATE_KEY !== undefined && MAX_USD > 0;
 const spendTracker = new SpendTracker(MAX_TOTAL_USD, MAX_CALLS);
+// Pre-signing USDC balance check (one shared reader, lazily one RPC client
+// per chain). An underfunded wallet is refused locally, before signing.
+const balanceReader = createUsdcBalanceReader(process.env.X402_BASE_RPC_URL || undefined);
 const PAY_KEY: Hex | undefined = AUTO_PAY ? PRIVATE_KEY : undefined;
 
 /** Exported for unit tests only. */
@@ -194,6 +204,7 @@ async function paidCall(spec: TrustToolSpec, call: BackendCall, args: ToolArgs):
     maxAmountUsd: MAX_USD,
     timeoutMs: TIMEOUT_MS,
     spendTracker,
+    ...(PAY_KEY ? { balanceCheck: { readBalance: balanceReader } } : {}),
   });
   const data = r.paid && spec.backend.augmentResult ? spec.backend.augmentResult(args, r.data) : r.data;
   const shaped = { ...r, data };
@@ -273,10 +284,24 @@ export function autoPayFailureHint(amountUsd: number, detail: unknown): string {
   if (amountUsd > MAX_USD) {
     return `Quote $${amountUsd} exceeds your per-call cap X402_MAX_USD $${MAX_USD}. Raise X402_MAX_USD to at least $${amountUsd} to auto-pay.`;
   }
+  // (a2) The local balance pre-check refused before signing (no payment was
+  // attempted). Check before the generic funds branch: the marker contains
+  // "insufficient_funds" too.
+  if (text.includes("insufficient_funds_local") || text.includes("auto-pay blocked")) {
+    return `The payer wallet does not hold enough USDC for this call (balance checked before signing; no payment was attempted). Fund the Base USDC wallet behind X402_PRIVATE_KEY and retry: the balance is re-checked on every call, so a top-up takes effect immediately.`;
+  }
+  // (a3) Settlement outcome UNCERTAIN (server marker settlement_uncertain,
+  // x402 v2 spec section 9 settlement_pending family): the payment may have
+  // landed on-chain. The next step is reconciliation, never a blind retry.
+  if (text.includes("settlement_uncertain") || text.includes("outcome is uncertain")) {
+    return `Payment was submitted and the settlement outcome is uncertain: it may have landed on-chain. Reconcile the transaction (see detail, txHash when present) on a block explorer BEFORE retrying; a blind retry can charge you twice.`;
+  }
   // (b) Settlement failed for lack of funds (payer wallet balance too low).
+  // Rare with the local pre-check; reachable when the balance dropped
+  // between check and settle (e.g. parallel calls) or the RPC read failed.
   if (text.includes("insufficient_funds") || text.includes("insufficient funds") || text.includes("balance")) {
     const payer = extractPayer(detail);
-    return `Payment signed but settlement failed: wallet balance too low${payer ? ` (payer ${payer})` : ""}. Fund the Base USDC wallet behind X402_PRIVATE_KEY.`;
+    return `Payment signed but settlement failed: wallet balance too low${payer ? ` (payer ${payer})` : ""}. Fund the Base USDC wallet behind X402_PRIVATE_KEY and retry; the balance is re-checked before every payment.`;
   }
   // (c) Session/total spend or call-count guard tripped.
   if (text.includes("spend cap") || text.includes("call cap")) {
