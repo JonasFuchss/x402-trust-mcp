@@ -76,6 +76,21 @@ To enable autonomous payment for the paid tools, add a funded Base USDC wallet:
 }
 ```
 
+## Hosted MCP endpoint (no install)
+
+You can connect to a stateless Streamable HTTP endpoint instead of running the
+npm package:
+
+- Endpoint: `POST https://x402-trust.com/mcp` (Streamable HTTP, stateless)
+- Manifest: `https://x402-trust.com/mcp.json`
+
+Same 15 tools, limits and response signatures as the stdio package. The free
+tools need no authentication. A paid tool answers the call with an in-band x402
+quote (the `accepts` list); pay it and retry the same call with the
+`PAYMENT-SIGNATURE` header. The hosted endpoint never pays for you (auto-pay
+with `X402_PRIVATE_KEY` is a client-side feature of the stdio package) and it
+does not forward your `Authorization` header anywhere.
+
 ## Configuration (env vars)
 
 | Var | Default | Description |
