@@ -16,6 +16,14 @@
  * This module is deliberately free of any MCP-SDK or HTTP-client imports so
  * the reseller can compile it standalone. It only depends on zod (schemas)
  * and its own types.
+ *
+ * NOTE: the SDK turns `inputSchema` into the JSON Schema advertised in
+ * `tools/list`, so the ZOD MAJOR decides the wire dialect for BOTH
+ * distributions. zod 4 drops `additionalProperties: false`, emits `anyOf` of
+ * `const` instead of `enum`, inlines `$ref`, and gives `.int()` an implicit
+ * `maximum: 9007199254740991`. Upgrading one side alone makes the npm package
+ * and the hosted endpoint advertise different schemas for the same tool, which
+ * is exactly the drift this module exists to prevent — bump both together.
  */
 import { z } from "zod";
 

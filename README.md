@@ -131,6 +131,22 @@ verifier live at [x402-trust.com/schemas](https://x402-trust.com/schemas).
 Watch management responses are unsigned by design: they carry capability
 secrets that must never be forwarded as evidence.
 
+## Development
+
+Requires Node.js **>= 22.12** (the test runner's floor; the published package
+itself still runs on Node >= 20).
+
+```bash
+npm install
+npm run build   # tsc → dist/ (+ chmod on dist/server.js)
+npm test        # vitest, no network and no database needed
+```
+
+The tool schemas (`src/tool-spec.ts`) are shared with the hosted endpoint, so
+a zod major bump changes the `tools/list` JSON schema both distributions emit.
+Regenerate both from the same zod version; details of the zod 3 → 4 wire drift
+are in the commit history.
+
 ## License
 
 MIT
