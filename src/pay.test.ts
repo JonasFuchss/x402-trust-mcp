@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
+import { recoverTypedDataAddress } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 import { parse402, signPayment, validateAccept, paidPost, SpendTracker, type Accept, type BalanceReader } from "./pay.js";
 
 const ACCEPT_BODY = {
@@ -442,5 +444,111 @@ describe("balance pre-check (underfunded-wallet guard, 2026-10-16)", () => {
     const readBalance: BalanceReader = async () => 0n;
     await paidPost({ ...OPTS, balanceCheck: { readBalance }, spendTracker: tracker });
     expect(tracker.totalSpentUsd).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// EIP-3009 signature recovery (viem 2.52.2 → 2.57.13 regression pin)
+//
+// The old assertion on signPayment only checked the signature FORMAT
+// (/^0x[0-9a-f]+$/i), so a viem release that changed hashing, the field order
+// of the typed-data struct, or the EIP-712 domain would have passed the suite
+// while producing payments every facilitator rejects. Two assertions close
+// that gap:
+//   1. a DETERMINISTIC TransferWithAuthorization (fixed nonce + validity, so
+//      the signature is a constant) is pinned to the exact signature bytes
+//      measured on viem 2.52.2 — any change to the digest surface fails here;
+//   2. the same recovery runs on a REAL signPayment() payload, tying the
+//      production code path (its own types/domain/encoding) to the recovered
+//      payer address instead of to a copy of the types.
+// ---------------------------------------------------------------------------
+describe("EIP-3009 signature recovery (viem 2.57 fingerprint)", () => {
+  // anvil key #0 — the same throwaway key the signPayment tests use.
+  const KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" as `0x${string}`;
+  const PAYER = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"; // anvil #0 address
+  const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+  const PAY_TO = "0xbBECBE90F28632a9d52ed67b33b43767b8c89285";
+
+  // Mirrors TRANSFER_WITH_AUTH_TYPES in pay.ts (not exported). If the wire
+  // shape ever changes, both the fingerprint and this struct must move.
+  const TYPES = {
+    TransferWithAuthorization: [
+      { name: "from", type: "address" },
+      { name: "to", type: "address" },
+      { name: "value", type: "uint256" },
+      { name: "validAfter", type: "uint256" },
+      { name: "validBefore", type: "uint256" },
+      { name: "nonce", type: "bytes32" },
+    ],
+  } as const;
+  const DOMAIN = { name: "USD Coin", version: "2", chainId: 8453, verifyingContract: USDC_BASE } as const;
+  const FIXED_NONCE = "0x1111111111111111111111111111111111111111111111111111111111111111" as const;
+  // 2026-01-01T00:00:00Z — only needed for the deterministic fixture.
+  const VALID_BEFORE = 1_767_225_600n;
+  // Measured on viem 2.52.2 (triage T5) and re-verified on 2.57.13.
+  const FINGERPRINT =
+    "0xaa5d8ab6f0bf30c8535deb375a3f68b19277610d3f08501a2b3613bc153a04c2068b7d0fe6c4d580970b321c41267976acc03bb27dcb0e6ff99c025353c85e611c";
+
+  it("produces the pinned EIP-3009 signature and recovers the signer", async () => {
+    const header = await signPayment(KEY, {
+      network: "eip155:8453",
+      amount: "5000",
+      asset: USDC_BASE as Accept["asset"],
+      payTo: PAY_TO as Accept["payTo"],
+      extra: { name: "USD Coin", version: "2" },
+    });
+    // A live signature is non-deterministic (random nonce, wall-clock
+    // validBefore) — recover it to prove the signer, not the bytes.
+    const live = JSON.parse(Buffer.from(header, "base64").toString("utf8"));
+    const liveAuth = live.payload.authorization;
+    expect(
+      await recoverTypedDataAddress({
+        domain: DOMAIN,
+        types: TYPES,
+        primaryType: "TransferWithAuthorization",
+        message: {
+          from: liveAuth.from,
+          to: liveAuth.to,
+          value: BigInt(liveAuth.value),
+          validAfter: BigInt(liveAuth.validAfter),
+          validBefore: BigInt(liveAuth.validBefore),
+          nonce: liveAuth.nonce,
+        },
+        signature: live.payload.signature,
+      }),
+    ).toBe(PAYER);
+
+    // The deterministic fixture pins the digest itself, independent of the
+    // random parts, so a viem-side encoding change cannot slip through.
+    const signature = await privateKeyToAccount(KEY).signTypedData({
+      domain: DOMAIN,
+      types: TYPES,
+      primaryType: "TransferWithAuthorization",
+      message: {
+        from: PAYER,
+        to: PAY_TO,
+        value: 5000n,
+        validAfter: 0n,
+        validBefore: VALID_BEFORE,
+        nonce: FIXED_NONCE,
+      },
+    });
+    expect(signature).toBe(FINGERPRINT);
+    expect(
+      await recoverTypedDataAddress({
+        domain: DOMAIN,
+        types: TYPES,
+        primaryType: "TransferWithAuthorization",
+        message: {
+          from: PAYER,
+          to: PAY_TO,
+          value: 5000n,
+          validAfter: 0n,
+          validBefore: VALID_BEFORE,
+          nonce: FIXED_NONCE,
+        },
+        signature,
+      }),
+    ).toBe(PAYER);
   });
 });
